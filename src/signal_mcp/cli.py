@@ -1,0 +1,407 @@
+"""CLI entrypoint for signal-mcp."""
+
+import asyncio
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import click
+
+from . import __version__, store as _store
+from .client import SignalClient, SignalError
+from .config import DAEMON_PORT, detect_account
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+@click.group()
+@click.version_option(__version__, prog_name="signal-mcp")
+def cli():
+    """signal-mcp: Signal CLI and MCP server via signal-cli."""
+    pass
+
+
+# ── send ──────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("recipient")
+@click.argument("message")
+def send(recipient: str, message: str):
+    """Send a text message to RECIPIENT (phone number in E.164 format)."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            result = await client.send_message(recipient, message)
+            click.echo(f"Sent (timestamp: {result.timestamp})")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── send-group ────────────────────────────────────────────────────────────────
+
+@cli.command("send-group")
+@click.argument("group_id")
+@click.argument("message")
+def send_group(group_id: str, message: str):
+    """Send a text message to GROUP_ID (use 'groups' command to list IDs)."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            result = await client.send_group_message(group_id, message)
+            click.echo(f"Sent (timestamp: {result.timestamp})")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── receive ───────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--watch", is_flag=True, help="Keep watching for new messages")
+@click.option("--timeout", default=5, show_default=True, help="Seconds to wait per poll")
+def receive(watch: bool, timeout: int):
+    """Receive incoming messages."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            if not watch:
+                messages = await client.receive_messages(timeout=timeout)
+                if not messages:
+                    click.echo("No new messages.")
+                for msg in messages:
+                    _print_message(msg)
+            else:
+                click.echo("Watching for messages (Ctrl+C to stop)…")
+                while True:
+                    messages = await client.receive_messages(timeout=timeout)
+                    for msg in messages:
+                        _print_message(msg)
+    try:
+        run(_run())
+    except KeyboardInterrupt:
+        click.echo("\nStopped.")
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+def _print_message(msg):
+    ts = msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    group = f" [group:{msg.group_id[:8]}…]" if msg.group_id else ""
+    click.echo(f"[{ts}]{group} {msg.sender}: {msg.body}")
+    for att in msg.attachments:
+        click.echo(f"  📎 {Path(att.filename).name} → {att.local_path}")
+
+
+# ── contacts ──────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def contacts(as_json: bool):
+    """List all Signal contacts."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            items = await client.list_contacts()
+            if as_json:
+                click.echo(json.dumps([c.to_dict() for c in items], indent=2))
+            else:
+                for c in items:
+                    blocked = " [BLOCKED]" if c.blocked else ""
+                    num = c.number or "(no number)"
+                    click.echo(f"{c.display_name:<35} {num}{blocked}")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── groups ────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def groups(as_json: bool):
+    """List all Signal groups."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            items = await client.list_groups()
+            if as_json:
+                click.echo(json.dumps([g.to_dict() for g in items], indent=2))
+            else:
+                for g in items:
+                    name = g.name or "(unnamed)"
+                    desc = f"  {g.description}" if g.description else ""
+                    click.echo(f"{name:<35} {g.member_count:>3} members  {g.id[:20]}…{desc}")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── history ───────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("recipient")
+@click.option("--limit", default=50, show_default=True, help="Max messages")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def history(recipient: str, limit: int, as_json: bool):
+    """Show message history with RECIPIENT (phone number)."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            messages = await client.get_conversation(recipient, limit=limit)
+            if not messages:
+                click.echo("No messages found.")
+                return
+            if as_json:
+                click.echo(json.dumps([m.to_dict() for m in messages], indent=2))
+            else:
+                for msg in messages:
+                    _print_message(msg)
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── search ────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("query")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def search(query: str, as_json: bool):
+    """Search recent messages for QUERY."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            messages = await client.search_messages(query)
+            if not messages:
+                click.echo("No messages found.")
+                return
+            if as_json:
+                click.echo(json.dumps([m.to_dict() for m in messages], indent=2))
+            else:
+                for msg in messages:
+                    _print_message(msg)
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── status ────────────────────────────────────────────────────────────────────
+
+@cli.command()
+def status():
+    """Show account and daemon status."""
+    async def _run():
+        try:
+            account = detect_account()
+            click.echo(f"Account : {account}")
+        except Exception as e:
+            click.echo(f"Account : ERROR — {e}")
+            return
+
+        async with SignalClient(account=account) as client:
+            alive = await client._daemon_alive()
+            state = "running" if alive else "stopped"
+            click.echo(f"Daemon  : {state} (port {DAEMON_PORT})")
+            click.echo(f"Version : signal-mcp {__version__}")
+    run(_run())
+
+
+# ── daemon ────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--port", default=DAEMON_PORT, show_default=True)
+def daemon(port: int):
+    """Start the signal-cli JSON-RPC daemon in the foreground."""
+    try:
+        account = detect_account()
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Starting signal-cli daemon for {account} on port {port}…")
+    click.echo("Press Ctrl+C to stop.")
+    try:
+        subprocess.run([
+            "signal-cli", "-u", account,
+            "daemon", f"--http", f"localhost:{port}",
+            "--no-receive-stdout",
+        ])
+    except KeyboardInterrupt:
+        click.echo("\nDaemon stopped.")
+
+
+# ── stop ──────────────────────────────────────────────────────────────────────
+
+@cli.command()
+def stop():
+    """Stop the running signal-cli daemon."""
+    async def _run():
+        async with SignalClient() as client:
+            stopped = await client.stop_daemon()
+            if stopped:
+                click.echo("Daemon stopped.")
+            else:
+                click.echo("Daemon was not running.")
+    run(_run())
+
+
+# ── store-stats ───────────────────────────────────────────────────────────────
+
+@cli.command("store-stats")
+def store_stats():
+    """Show stats about locally stored messages."""
+    stats = _store.get_stats()
+    click.echo(f"Total messages : {stats['total_messages']}")
+    click.echo(f"Oldest         : {stats['oldest'] or 'n/a'}")
+    click.echo(f"Newest         : {stats['newest'] or 'n/a'}")
+
+
+# ── import-desktop ────────────────────────────────────────────────────────────
+
+@cli.command("import-desktop")
+def import_desktop():
+    """Import ALL messages from Signal Desktop (requires macOS Keychain access)."""
+    from .desktop import import_from_desktop, DesktopImportError
+
+    def progress(msg):
+        click.echo(f"  {msg}")
+
+    click.echo("Importing from Signal Desktop…")
+    click.echo("  Note: macOS may ask for Keychain access — click Allow.")
+    try:
+        result = import_from_desktop(progress_cb=progress)
+        click.echo(f"\nDone: {result['imported']} imported, {result['skipped']} already stored ({result['total']} total)")
+    except DesktopImportError as e:
+        click.echo(f"\nError: {e}", err=True)
+        sys.exit(1)
+
+
+# ── translate ─────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("recipient")
+@click.option("--to", "target_lang", default="English", show_default=True, help="Target language")
+@click.option("--limit", default=20, show_default=True, help="Number of recent messages")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def translate(recipient: str, target_lang: str, limit: int, as_json: bool):
+    """Translate recent messages from RECIPIENT using Claude."""
+    from .translation import translate_messages, TranslationError
+    from . import store as _store
+
+    messages = _store.get_conversation(recipient, limit=limit)
+    if not messages:
+        click.echo("No stored messages found. Run: signal-mcp receive --watch")
+        return
+
+    click.echo(f"Translating {len(messages)} messages to {target_lang}…")
+    try:
+        results = translate_messages(messages, target_language=target_lang)
+    except TranslationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps(results, indent=2))
+    else:
+        for r in results:
+            ts = r.get("timestamp", "")[:16]
+            sender = r.get("sender", "?")
+            orig = r.get("original", "")
+            trans = r.get("translated", "")
+            if orig != trans:
+                click.echo(f"[{ts}] {sender}:")
+                click.echo(f"  DE: {orig}")
+                click.echo(f"  EN: {trans}")
+            else:
+                click.echo(f"[{ts}] {sender}: {orig}")
+
+
+# ── install-service ───────────────────────────────────────────────────────────
+
+PLIST_LABEL = "com.signal-mcp.watch"
+PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
+
+
+@cli.command("install-service")
+def install_service():
+    """Install a macOS LaunchAgent to auto-receive Signal messages in the background."""
+    import shutil
+    binary = shutil.which("signal-mcp")
+    if not binary:
+        # Fall back to uv run in the project dir
+        binary = f"uv run --directory {Path(__file__).parent.parent.parent} signal-mcp"
+
+    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{PLIST_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{binary}</string>
+        <string>receive</string>
+        <string>--watch</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{Path.home()}/.local/share/signal-mcp/watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>{Path.home()}/.local/share/signal-mcp/watch.err</string>
+</dict>
+</plist>"""
+
+    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PLIST_PATH.write_text(plist)
+
+    result = subprocess.run(
+        ["launchctl", "load", "-w", str(PLIST_PATH)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        click.echo(f"Warning: launchctl load failed: {result.stderr.strip()}")
+    else:
+        click.echo(f"Service installed and started.")
+        click.echo(f"  Plist : {PLIST_PATH}")
+        click.echo(f"  Log   : ~/.local/share/signal-mcp/watch.log")
+        click.echo(f"  Messages will be captured automatically on login.")
+
+
+@cli.command("uninstall-service")
+def uninstall_service():
+    """Remove the background Signal message watcher service."""
+    if not PLIST_PATH.exists():
+        click.echo("Service not installed.")
+        return
+    subprocess.run(["launchctl", "unload", "-w", str(PLIST_PATH)], capture_output=True)
+    PLIST_PATH.unlink(missing_ok=True)
+    click.echo("Service uninstalled.")
+
+
+# ── serve (MCP) ───────────────────────────────────────────────────────────────
+
+@cli.command()
+def serve():
+    """Start the MCP server (stdio transport, for Claude Code)."""
+    from .server import serve as _serve
+    asyncio.run(_serve())

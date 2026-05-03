@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets / local config
+.env
+
+# Tooling
+.code-review-graph/
+
+# User data — never commit
+*.db
+*.pid

@@ -1,0 +1,40 @@
+[project]
+name = "signal-mcp"
+version = "1.0.0"
+description = "Complete Signal MCP server and CLI via signal-cli"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "anthropic>=0.97.0",
+    "click>=8.3.3",
+    "cryptography>=47.0.0",
+    "httpx>=0.28.1",
+    "mcp>=1.27.0",
+]
+
+[project.scripts]
+signal-mcp = "signal_mcp.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/signal_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/signal_mcp"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
+    "hatchling>=1.27.0",
+]
