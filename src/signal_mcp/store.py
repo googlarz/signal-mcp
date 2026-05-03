@@ -249,7 +249,8 @@ def list_conversations(own_number: str = "") -> list[dict]:
                 ) AS id,
                 CASE WHEN group_id IS NOT NULL THEN 'group' ELSE 'direct' END AS type,
                 MAX(timestamp) AS last_message_at,
-                COUNT(*) AS message_count
+                COUNT(*) AS message_count,
+                SUM(CASE WHEN is_read = 0 AND sender != ? THEN 1 ELSE 0 END) AS unread_count
                FROM messages
                WHERE COALESCE(group_id,
                     CASE WHEN sender = ? THEN recipient ELSE sender END
@@ -258,14 +259,44 @@ def list_conversations(own_number: str = "") -> list[dict]:
                     CASE WHEN sender = ? THEN recipient ELSE sender END
                )
                ORDER BY last_message_at DESC""",
-            (own_number, own_number, own_number),
+            (own_number, own_number, own_number, own_number),
         ).fetchall()
+        # Fetch last message body for each conversation in one query
+        conv_ids = [r["id"] for r in rows]
+        last_body: dict[str, str] = {}
+        if conv_ids:
+            ph = ",".join("?" * len(conv_ids))
+            snippet_rows = conn.execute(
+                f"""SELECT
+                        COALESCE(group_id,
+                            CASE WHEN sender = ? THEN recipient ELSE sender END
+                        ) AS conv_id,
+                        body
+                    FROM messages
+                    WHERE COALESCE(group_id,
+                            CASE WHEN sender = ? THEN recipient ELSE sender END
+                    ) IN ({ph})
+                    AND timestamp IN (
+                        SELECT MAX(timestamp) FROM messages
+                        WHERE COALESCE(group_id,
+                            CASE WHEN sender = ? THEN recipient ELSE sender END
+                        ) IN ({ph})
+                        GROUP BY COALESCE(group_id,
+                            CASE WHEN sender = ? THEN recipient ELSE sender END
+                        )
+                    )""",
+                [own_number, own_number] + conv_ids + [own_number] + conv_ids + [own_number],
+            ).fetchall()
+            for s in snippet_rows:
+                last_body[s["conv_id"]] = s["body"]
         return [
             {
                 "id": r["id"],
                 "type": r["type"],
                 "last_message_at": datetime.fromtimestamp(r["last_message_at"] / 1000).isoformat(),
                 "message_count": r["message_count"],
+                "unread_count": r["unread_count"] or 0,
+                "last_message": last_body.get(r["id"], ""),
             }
             for r in rows
         ]

@@ -1,6 +1,6 @@
 [project]
 name = "signal-mcp"
-version = "1.7.0"
+version = "1.8.0"
 description = "Complete Signal MCP server and CLI via signal-cli"
 readme = "README.md"
 requires-python = ">=3.12"

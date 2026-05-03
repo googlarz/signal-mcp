@@ -2,6 +2,23 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.8.0] — 2026-05-03
+
+### UX
+
+- **`list_conversations` now includes `unread_count` and `last_message`** — Claude can tell at a glance which conversations need attention and what the last message was, without a second round-trip
+- **`get_unread` auto-marks as read** — consistent with `get_conversation`; fetching unread messages marks them read in the local store
+
+### Tests
+
+- **25 CLI tests** (`test_cli.py`) — covers `send`, `note`, `contacts`, `groups`, `history`, `search`, `store-stats`, `export`, `edit`, `status`; cli.py now has test coverage for the first time
+
+### Stats
+- 50 MCP tools total
+- 229 tests
+
+---
+
 ## [1.7.0] — 2026-05-03
 
 ### New tools (2 → 50 total)

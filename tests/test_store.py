@@ -248,6 +248,29 @@ def test_list_conversations_deduped():
     assert results[0]["message_count"] == 2
 
 
+def test_list_conversations_unread_count():
+    # 2 unread from +2, 1 read
+    store.save_message(Message(id="u1", sender="+2", body="a", timestamp=datetime(2024, 1, 1), is_read=False))
+    store.save_message(Message(id="u2", sender="+2", body="b", timestamp=datetime(2024, 1, 2), is_read=False))
+    store.save_message(Message(id="u3", sender="+2", body="c", timestamp=datetime(2024, 1, 3), is_read=True))
+    results = store.list_conversations()
+    assert results[0]["unread_count"] == 2
+
+
+def test_list_conversations_unread_count_excludes_own_sent():
+    # Outgoing messages should not count as unread
+    store.save_message(make_msg(id="out1", sender="+me", recipient="+other"))
+    results = store.list_conversations(own_number="+me")
+    assert results[0]["unread_count"] == 0
+
+
+def test_list_conversations_last_message():
+    store.save_message(Message(id="lm1", sender="+3", body="first", timestamp=datetime(2024, 1, 1)))
+    store.save_message(Message(id="lm2", sender="+3", body="last one", timestamp=datetime(2024, 1, 2)))
+    results = store.list_conversations()
+    assert results[0]["last_message"] == "last one"
+
+
 # ── get_stats ─────────────────────────────────────────────────────────────────
 
 def test_get_stats_empty():

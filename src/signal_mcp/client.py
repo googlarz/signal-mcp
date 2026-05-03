@@ -747,7 +747,13 @@ class SignalClient:
         return await asyncio.to_thread(_store.export_messages, fmt, recipient, since)
 
     async def get_unread_messages(self, limit: int = 50) -> list[Message]:
-        return await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)
+        messages = await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)
+        # Auto-mark as read (consistent with get_conversation)
+        if messages:
+            await asyncio.to_thread(_store.mark_as_read, [m.id for m in messages])
+            for m in messages:
+                m.is_read = True
+        return messages
 
     def get_own_number(self) -> str:
         return self.account
