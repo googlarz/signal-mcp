@@ -212,9 +212,10 @@ def import_from_desktop(progress_cb=None) -> dict:
         progress_cb("Decrypting Signal Desktop database…")
 
     # 3. Export encrypted DB to plain SQLite temp file
-    plain_db = _decrypt_db_to_temp(db_key_hex)
-
+    plain_db = None
     try:
+        plain_db = _decrypt_db_to_temp(db_key_hex)
+
         if progress_cb:
             progress_cb("Importing messages…")
 
@@ -238,4 +239,5 @@ def import_from_desktop(progress_cb=None) -> dict:
 
         return {"imported": imported, "skipped": skipped, "total": total}
     finally:
-        plain_db.unlink(missing_ok=True)
+        if plain_db is not None:
+            plain_db.unlink(missing_ok=True)

@@ -4,6 +4,7 @@ import pytest
 import respx
 import httpx
 
+import signal_mcp.store as _store_mod
 from signal_mcp.client import SignalClient, SignalError
 from signal_mcp.config import DAEMON_URL
 from signal_mcp.models import Contact, Group, GroupMember, Message
@@ -15,6 +16,13 @@ def rpc_ok(result) -> dict:
 
 def rpc_err(message: str, code: int = -1) -> dict:
     return {"jsonrpc": "2.0", "id": 1, "error": {"code": code, "message": message}}
+
+
+@pytest.fixture(autouse=True)
+def reset_store(monkeypatch, tmp_path):
+    """Redirect store to temp DB for each test."""
+    monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(_store_mod, "_initialized", False)
 
 
 @pytest.fixture
@@ -162,9 +170,49 @@ async def test_set_typing_stop(client):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_react_to_message(client):
+async def test_react_to_message_dm(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.react_to_message(
+        target_author="+11111111111",
+        target_timestamp=1700000000000,
+        emoji="👍",
+        recipient="+19999999999",
+    )
+    body = route.calls[0].request.read()
+    import json
+    params = json.loads(body)["params"]
+    assert params["recipient"] == ["+19999999999"]
+    assert "groupId" not in params
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_react_to_message_group(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.react_to_message(
+        target_author="+11111111111",
+        target_timestamp=1700000000000,
+        emoji="❤️",
+        group_id="grp123==",
+    )
+    body = route.calls[0].request.read()
+    import json
+    params = json.loads(body)["params"]
+    assert params["groupId"] == "grp123=="
+    assert "recipient" not in params
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_react_to_message_requires_target(client):
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
-    await client.react_to_message("+19999999999", "+11111111111", 1700000000000, "👍")
+    from signal_mcp.client import SignalError
+    with pytest.raises(SignalError):
+        await client.react_to_message(
+            target_author="+11111111111",
+            target_timestamp=1700000000000,
+            emoji="👍",
+        )
 
 
 @respx.mock
@@ -225,27 +273,19 @@ def test_message_to_dict():
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_send_message_saves_to_store(client, tmp_path, monkeypatch):
-    import signal_mcp.store as store
-    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
-    import signal_mcp.client as client_mod
-    monkeypatch.setattr(client_mod, "_store", store)
+async def test_send_message_saves_to_store(client):
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1700000000000})))
     await client.send_message("+19999999999", "saved!")
-    msgs = store.get_conversation("+10000000000")  # own account
+    msgs = _store_mod.get_conversation("+19999999999")
     assert any(m.body == "saved!" for m in msgs)
 
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_send_group_message_saves_to_store(client, tmp_path, monkeypatch):
-    import signal_mcp.store as store
-    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
-    import signal_mcp.client as client_mod
-    monkeypatch.setattr(client_mod, "_store", store)
+async def test_send_group_message_saves_to_store(client):
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1700000000000})))
     await client.send_group_message("grp123", "group saved!")
-    msgs = store.get_conversation("grp123")
+    msgs = _store_mod.get_conversation("grp123")
     assert any(m.body == "group saved!" for m in msgs)
 
 
@@ -293,3 +333,91 @@ async def test_list_identities(client):
 async def test_trust_identity(client):
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     await client.trust_identity("+19999999999", trust_all_known=True)
+
+
+# ── RPC param shape tests ─────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_message_rpc_params(client, tmp_path, monkeypatch):
+    """send_message must pass recipient as a list."""
+    import signal_mcp.store as s
+    monkeypatch.setattr(s, "DB_PATH", tmp_path / "t.db")
+    monkeypatch.setattr(s, "_initialized", False)
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    await client.send_message("+19999999999", "hi")
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["recipient"] == ["+19999999999"]
+    assert params["message"] == "hi"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_attachment_rpc_params(client):
+    """send_group_attachment must use 'send' method and groupId as a string."""
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    await client.send_group_attachment("grp123==", "/tmp/file.jpg")
+    import json
+    body = json.loads(route.calls[0].request.read())
+    assert body["method"] == "send"
+    assert body["params"]["groupId"] == "grp123=="
+    assert isinstance(body["params"]["attachment"], list)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_read_receipt_rpc_params(client):
+    """send_read_receipt must pass recipient as a list."""
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.send_read_receipt("+19999999999", [111, 222])
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["recipient"] == ["+19999999999"]
+    assert params["targetTimestamps"] == [111, 222]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_attachment_expands_tilde(client):
+    """send_attachment must expand ~ in paths."""
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    await client.send_attachment("+19999999999", "~/Downloads/file.jpg")
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert "~" not in params["attachment"][0]
+    assert params["attachment"][0].startswith("/")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_group_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_group("grp1==", name="New Name", add_members=["+1999"])
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["groupId"] == "grp1=="
+    assert params["name"] == "New Name"
+    assert params["member"] == ["+1999"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_set_expiration_timer_dm(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.set_expiration_timer(recipient="+1999", expiration=86400)
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["recipient"] == "+1999"
+    assert params["expiration"] == 86400
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_set_expiration_timer_group(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.set_expiration_timer(group_id="grp1==", expiration=3600)
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["groupId"] == "grp1=="
+    assert params["expiration"] == 3600

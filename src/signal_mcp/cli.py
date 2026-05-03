@@ -154,13 +154,26 @@ def groups(as_json: bool):
 @cli.command()
 @click.argument("recipient")
 @click.option("--limit", default=50, show_default=True, help="Max messages")
+@click.option("--since", default=None, help="Only messages after this date (YYYY-MM-DD or ISO datetime)")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def history(recipient: str, limit: int, as_json: bool):
-    """Show message history with RECIPIENT (phone number)."""
+def history(recipient: str, limit: int, since: str | None, as_json: bool):
+    """Show message history with RECIPIENT (phone number or group ID)."""
+    from datetime import datetime as _dt
+    since_dt = None
+    if since:
+        for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                since_dt = _dt.strptime(since, fmt)
+                break
+            except ValueError:
+                continue
+        if since_dt is None:
+            click.echo(f"Error: invalid --since date '{since}' (use YYYY-MM-DD)", err=True)
+            sys.exit(1)
+
     async def _run():
         async with SignalClient() as client:
-            await client.ensure_daemon()
-            messages = await client.get_conversation(recipient, limit=limit)
+            messages = await client.get_conversation(recipient, limit=limit, since=since_dt)
             if not messages:
                 click.echo("No messages found.")
                 return
@@ -185,7 +198,6 @@ def search(query: str, as_json: bool):
     """Search recent messages for QUERY."""
     async def _run():
         async with SignalClient() as client:
-            await client.ensure_daemon()
             messages = await client.search_messages(query)
             if not messages:
                 click.echo("No messages found.")

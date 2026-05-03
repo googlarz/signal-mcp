@@ -19,7 +19,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **25 MCP tools** — full coverage of everything signal-cli supports
+- **27 MCP tools** — full coverage of everything signal-cli supports
 - **Complete conversation history** — both sent and received messages stored locally
 - **Full-text search** — FTS5 SQLite index across all messages
 - **Signal Desktop import** — pull your entire message history in one command
@@ -95,7 +95,7 @@ Restart Claude Code. Signal tools will appear automatically.
 | `list_contacts` | All contacts with names and numbers |
 | `list_groups` | All groups with members |
 | `list_conversations` | All conversations ordered by most recent |
-| `get_conversation` | Message history with a contact or group |
+| `get_conversation` | Message history with a contact or group (supports `since` filter) |
 | `search_messages` | Full-text search across all stored messages |
 | `send_attachment` | Send a file or image to a contact |
 | `send_group_attachment` | Send a file or image to a group |
@@ -111,6 +111,8 @@ Restart Claude Code. Signal tools will appear automatically.
 | `leave_group` | Leave a Signal group |
 | `list_identities` | List identity keys and trust levels |
 | `trust_identity` | Trust a contact's identity key |
+| `update_group` | Rename group, add/remove members, set expiry timer |
+| `set_expiration_timer` | Set or disable disappearing messages |
 | `store_stats` | Stored message count and date range |
 | `import_desktop` | Import full history from Signal Desktop |
 

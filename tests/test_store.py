@@ -10,19 +10,24 @@ from signal_mcp import store
 
 @pytest.fixture(autouse=True)
 def temp_db(tmp_path, monkeypatch):
-    """Redirect DB to a temp file for each test."""
+    """Redirect DB to a temp file and reset init flag for each test."""
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "test_messages.db")
+    monkeypatch.setattr(store, "_initialized", False)
 
 
-def make_msg(id="1", sender="+1", body="hello", group_id=None):
+def make_msg(id="1", sender="+1", body="hello", group_id=None, recipient=None,
+             ts=None):
     return Message(
         id=id,
         sender=sender,
+        recipient=recipient,
         body=body,
-        timestamp=datetime(2024, 6, 1, 12, 0, 0),
+        timestamp=ts or datetime(2024, 6, 1, 12, 0, 0),
         group_id=group_id,
     )
 
+
+# ── save / dedup ──────────────────────────────────────────────────────────────
 
 def test_save_and_retrieve():
     msg = make_msg(id="100", sender="+11111", body="test message")
@@ -40,6 +45,42 @@ def test_duplicate_not_saved():
     assert len(results) == 1
 
 
+def test_outgoing_message_marked_read():
+    """Messages saved with recipient (outgoing) should be is_read=1."""
+    store.save_message(make_msg(id="out1", sender="+me", recipient="+other"))
+    msgs = store.get_conversation("+other")
+    assert msgs[0].is_read is True
+
+
+def test_incoming_message_unread():
+    store.save_message(make_msg(id="in1", sender="+other"))
+    msgs = store.get_conversation("+other")
+    assert msgs[0].is_read is False
+
+
+# ── get_conversation ──────────────────────────────────────────────────────────
+
+def test_get_conversation_by_sender():
+    store.save_message(make_msg(id="100", sender="+2", body="hi"))
+    results = store.get_conversation("+2")
+    assert len(results) == 1
+
+
+def test_get_conversation_outgoing_dm_included():
+    """Outgoing DMs must appear in the conversation with the recipient."""
+    store.save_message(make_msg(id="out1", sender="+me", recipient="+other", body="hey"))
+    results = store.get_conversation("+other")
+    assert len(results) == 1
+    assert results[0].body == "hey"
+
+
+def test_get_conversation_both_directions():
+    store.save_message(make_msg(id="in1", sender="+2", body="yo"))
+    store.save_message(make_msg(id="out1", sender="+1", recipient="+2", body="sup"))
+    results = store.get_conversation("+2")
+    assert len(results) == 2
+
+
 def test_get_conversation_by_group():
     msg = make_msg(id="300", sender="+2", group_id="group-abc")
     store.save_message(msg)
@@ -47,6 +88,33 @@ def test_get_conversation_by_group():
     assert len(results) == 1
     assert results[0].group_id == "group-abc"
 
+
+def test_conversation_limit():
+    for i in range(10):
+        store.save_message(make_msg(id=str(800 + i), sender="+4", body=f"msg {i}",
+                                   ts=datetime(2024, 1, i + 1)))
+    results = store.get_conversation("+4", limit=5)
+    assert len(results) == 5
+
+
+def test_get_conversation_since():
+    cutoff = datetime(2024, 6, 1)
+    store.save_message(make_msg(id="old", sender="+2", ts=datetime(2024, 1, 1)))
+    store.save_message(make_msg(id="new", sender="+2", ts=datetime(2024, 7, 1)))
+    results = store.get_conversation("+2", since=cutoff)
+    assert len(results) == 1
+    assert results[0].id == "new"
+
+
+def test_get_conversation_oldest_first():
+    store.save_message(make_msg(id="m1", sender="+2", ts=datetime(2024, 1, 1)))
+    store.save_message(make_msg(id="m2", sender="+2", ts=datetime(2024, 1, 2)))
+    msgs = store.get_conversation("+2")
+    assert msgs[0].id == "m1"
+    assert msgs[1].id == "m2"
+
+
+# ── search_messages ───────────────────────────────────────────────────────────
 
 def test_search_messages():
     store.save_message(make_msg(id="400", body="hello world"))
@@ -64,11 +132,43 @@ def test_search_no_results():
 
 def test_search_special_chars_dont_crash():
     store.save_message(make_msg(id="501", body="call +491234567890 tomorrow"))
-    # These would crash raw FTS5 but should not raise
     for query in ["+491234567890", "OR", "AND NOT", "hello AND"]:
         results = store.search_messages(query)
         assert isinstance(results, list)
 
+
+# ── get_unread_messages ───────────────────────────────────────────────────────
+
+def test_get_unread_returns_incoming():
+    store.save_message(make_msg(id="in1", sender="+2", body="unread"))
+    msgs = store.get_unread_messages(own_number="+1")
+    assert len(msgs) == 1
+
+
+def test_get_unread_excludes_own_sent():
+    store.save_message(make_msg(id="out1", sender="+1", recipient="+2"))
+    assert store.get_unread_messages(own_number="+1") == []
+
+
+def test_get_unread_excludes_already_read():
+    store.save_message(make_msg(id="in1", sender="+2"))
+    store.mark_as_read(["in1"])
+    assert store.get_unread_messages(own_number="+1") == []
+
+
+# ── mark_as_read ──────────────────────────────────────────────────────────────
+
+def test_mark_as_read():
+    store.save_message(make_msg(id="in1", sender="+2"))
+    store.mark_as_read(["in1"])
+    assert store.get_unread_messages(own_number="+1") == []
+
+
+def test_mark_as_read_empty_list_no_error():
+    store.mark_as_read([])
+
+
+# ── attachments ───────────────────────────────────────────────────────────────
 
 def test_save_with_attachment():
     msg = Message(
@@ -80,34 +180,14 @@ def test_save_with_attachment():
     )
     store.save_message(msg)
     results = store.get_conversation("+3")
-    assert len(results) == 1
     assert len(results[0].attachments) == 1
     assert results[0].attachments[0].filename == "photo.jpg"
 
 
-def test_get_stats_empty():
-    stats = store.get_stats()
-    assert stats["total_messages"] == 0
-    assert stats["oldest"] is None
-
-
-def test_get_stats_with_data():
-    store.save_message(make_msg(id="700"))
-    stats = store.get_stats()
-    assert stats["total_messages"] == 1
-    assert stats["oldest"] is not None
-
-
-def test_conversation_limit():
-    for i in range(10):
-        store.save_message(make_msg(id=str(800 + i), sender="+4", body=f"msg {i}"))
-    results = store.get_conversation("+4", limit=5)
-    assert len(results) == 5
-
+# ── list_conversations ────────────────────────────────────────────────────────
 
 def test_list_conversations_empty():
-    results = store.list_conversations()
-    assert results == []
+    assert store.list_conversations() == []
 
 
 def test_list_conversations_direct():
@@ -118,6 +198,14 @@ def test_list_conversations_direct():
     assert "+5" in ids
     assert "+6" in ids
     assert all(r["type"] == "direct" for r in results)
+
+
+def test_list_conversations_outgoing_dm_appears():
+    """Outgoing DMs must create a conversation entry."""
+    store.save_message(make_msg(id="out1", sender="+me", recipient="+other"))
+    results = store.list_conversations(own_number="+me")
+    assert len(results) == 1
+    assert results[0]["id"] == "+other"
 
 
 def test_list_conversations_group():
@@ -147,3 +235,61 @@ def test_list_conversations_ordered_by_recency():
     results = store.list_conversations()
     ids = [r["id"] for r in results]
     assert ids.index("+b") < ids.index("+a")
+
+
+def test_list_conversations_deduped():
+    store.save_message(make_msg(id="m1", sender="+2", ts=datetime(2024, 1, 1)))
+    store.save_message(make_msg(id="m2", sender="+2", ts=datetime(2024, 1, 2)))
+    results = store.list_conversations()
+    assert len(results) == 1
+    assert results[0]["message_count"] == 2
+
+
+# ── get_stats ─────────────────────────────────────────────────────────────────
+
+def test_get_stats_empty():
+    stats = store.get_stats()
+    assert stats["total_messages"] == 0
+    assert stats["oldest"] is None
+
+
+def test_get_stats_with_data():
+    store.save_message(make_msg(id="700"))
+    stats = store.get_stats()
+    assert stats["total_messages"] == 1
+    assert stats["oldest"] is not None
+    assert stats["newest"] is not None
+
+
+# ── init_db migration ─────────────────────────────────────────────────────────
+
+def test_init_db_idempotent():
+    """Calling init_db twice must not raise."""
+    store.init_db()
+    store.init_db()
+
+
+def test_migration_adds_recipient_column(tmp_path, monkeypatch):
+    """Simulate upgrading from pre-1.1 schema (no recipient column)."""
+    import sqlite3
+    db_path = tmp_path / "old.db"
+    monkeypatch.setattr(store, "DB_PATH", db_path)
+    monkeypatch.setattr(store, "_initialized", False)
+
+    # Create old-style schema without recipient column
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""CREATE TABLE messages (
+        id TEXT PRIMARY KEY, sender TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        timestamp INTEGER NOT NULL, group_id TEXT, quote_id TEXT, is_read INTEGER NOT NULL DEFAULT 0
+    )""")
+    conn.execute("INSERT INTO messages VALUES ('m1','+1','hi',1700000000000,NULL,NULL,0)")
+    conn.commit()
+    conn.close()
+
+    # init_db should run migration without error
+    monkeypatch.setattr(store, "_initialized", False)
+    store.init_db()
+
+    # Old data still readable
+    msgs = store.get_conversation("+1")
+    assert len(msgs) == 1

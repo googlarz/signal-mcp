@@ -9,8 +9,15 @@ ATTACHMENT_DIR = Path.home() / "Downloads" / "signal-attachments"
 DAEMON_PID_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "daemon.pid"
 
 
+_account_cache: str | None = None
+
+
 def detect_account() -> str:
-    """Auto-detect linked Signal account number from signal-cli."""
+    """Auto-detect linked Signal account number from signal-cli (result is cached)."""
+    global _account_cache
+    if _account_cache is not None:
+        return _account_cache
+
     result = subprocess.run(
         ["signal-cli", "listAccounts"],
         capture_output=True,
@@ -23,9 +30,11 @@ def detect_account() -> str:
         line = line.strip()
         # signal-cli output is either "Number: +E164" or bare "+E164"
         if line.startswith("Number:"):
-            return line.split(":", 1)[1].strip()
+            _account_cache = line.split(":", 1)[1].strip()
+            return _account_cache
         if line.startswith("+"):
-            return line.split()[0]
+            _account_cache = line.split()[0]
+            return _account_cache
 
     raise RuntimeError("No Signal account found. Run: signal-cli link --name 'MyDevice'")
 

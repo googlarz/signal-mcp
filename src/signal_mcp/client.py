@@ -1,7 +1,9 @@
 """Async signal-cli JSON-RPC client. Single backend for all reads and writes."""
 
 import asyncio
+import itertools
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -25,6 +27,9 @@ from . import store as _store
 
 class SignalError(Exception):
     pass
+
+
+_rpc_id = itertools.count(1)
 
 
 class SignalClient:
@@ -55,7 +60,6 @@ class SignalClient:
         if await self._daemon_alive():
             return
 
-        # Kill stale PID if present
         stale_pid = read_daemon_pid()
         if stale_pid:
             try:
@@ -69,7 +73,7 @@ class SignalClient:
             [
                 "signal-cli", "-u", self.account,
                 "daemon",
-                f"--http", f"localhost:{DAEMON_PORT}",
+                "--http", f"localhost:{DAEMON_PORT}",
                 "--no-receive-stdout",
             ],
             stdout=subprocess.DEVNULL,
@@ -97,7 +101,6 @@ class SignalClient:
                 return True
             except ProcessLookupError:
                 clear_daemon_pid()
-        # Also try killing any signal-cli daemon on our port
         try:
             result = subprocess.run(
                 ["lsof", "-ti", f"tcp:{DAEMON_PORT}"],
@@ -129,7 +132,7 @@ class SignalClient:
         payload: dict = {
             "jsonrpc": "2.0",
             "method": method,
-            "id": int(time.time() * 1000),
+            "id": next(_rpc_id),
         }
         if params:
             payload["params"] = params
@@ -156,6 +159,7 @@ class SignalClient:
         _store.save_message(Message(
             id=f"sent_{ts}_{recipient}",
             sender=self.account,
+            recipient=recipient,
             body=message,
             timestamp=datetime.fromtimestamp(ts / 1000),
         ))
@@ -177,7 +181,8 @@ class SignalClient:
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
     async def send_attachment(self, recipient: str, path: str, caption: str = "") -> SendResult:
-        params: dict = {"recipient": [recipient], "attachment": [path]}
+        resolved = str(Path(path).expanduser().resolve())
+        params: dict = {"recipient": [recipient], "attachment": [resolved]}
         if caption:
             params["message"] = caption
         result = await self._rpc("send", params)
@@ -185,10 +190,11 @@ class SignalClient:
         return SendResult(timestamp=ts, recipient=recipient, success=True)
 
     async def send_group_attachment(self, group_id: str, path: str, caption: str = "") -> SendResult:
-        params: dict = {"groupId": [group_id], "attachment": [path]}
+        resolved = str(Path(path).expanduser().resolve())
+        params: dict = {"groupId": group_id, "attachment": [resolved]}
         if caption:
             params["message"] = caption
-        result = await self._rpc("sendGroupMessage", params)
+        result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
@@ -197,14 +203,25 @@ class SignalClient:
         await self._rpc("sendTyping", {"recipient": [recipient], "action": action})
 
     async def react_to_message(
-        self, recipient: str, target_author: str, target_timestamp: int, emoji: str
+        self,
+        target_author: str,
+        target_timestamp: int,
+        emoji: str,
+        recipient: str | None = None,
+        group_id: str | None = None,
     ) -> None:
-        await self._rpc("sendReaction", {
-            "recipient": [recipient],
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {
             "emoji": emoji,
             "targetAuthor": target_author,
             "targetTimestamp": target_timestamp,
-        })
+        }
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        await self._rpc("sendReaction", params)
 
     async def receive_messages(self, timeout: int = 5) -> list[Message]:
         """Poll for new messages and persist them to local store."""
@@ -229,7 +246,6 @@ class SignalClient:
             if local_path:
                 dest = ensure_attachment_dir() / Path(local_path).name
                 try:
-                    import shutil
                     shutil.copy2(local_path, dest)
                     local_path = str(dest)
                 except Exception:
@@ -316,71 +332,99 @@ class SignalClient:
             ))
         return groups
 
+    async def update_group(
+        self,
+        group_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        add_members: list[str] | None = None,
+        remove_members: list[str] | None = None,
+        expiration_seconds: int | None = None,
+    ) -> None:
+        """Update group properties (name, description, members, expiry timer)."""
+        params: dict = {"groupId": group_id}
+        if name is not None:
+            params["name"] = name
+        if description is not None:
+            params["description"] = description
+        if add_members:
+            params["member"] = add_members
+        if remove_members:
+            params["removeMember"] = remove_members
+        if expiration_seconds is not None:
+            params["expiration"] = expiration_seconds
+        await self._rpc("updateGroup", params)
+
     # ── History & Search ──────────────────────────────────────────────────────
 
-    async def get_conversation(self, recipient: str, limit: int = 50) -> list[Message]:
-        """Get message history from local store.
-        Note: messages are stored as they arrive via receive_messages().
-        Run 'signal-mcp receive --watch' to continuously populate history.
-        """
-        return _store.get_conversation(recipient, limit=limit)
+    async def get_conversation(
+        self, recipient: str, limit: int = 50, since: datetime | None = None
+    ) -> list[Message]:
+        return _store.get_conversation(recipient, limit=limit, since=since)
 
     async def search_messages(self, query: str, limit: int = 50) -> list[Message]:
-        """Full-text search across all stored messages."""
         return _store.search_messages(query, limit=limit)
 
     def list_conversations(self) -> list[dict]:
-        """Return all distinct conversations from local store, newest first."""
         return _store.list_conversations(own_number=self.account)
+
+    def get_unread_messages(self, limit: int = 50) -> list[Message]:
+        return _store.get_unread_messages(own_number=self.account, limit=limit)
 
     # ── Message actions ───────────────────────────────────────────────────────
 
     async def delete_message(self, recipient: str, target_timestamp: int) -> None:
-        """Remote-delete (unsend) a message."""
         await self._rpc("remoteDelete", {
             "recipient": [recipient],
             "targetTimestamp": target_timestamp,
         })
 
     async def delete_group_message(self, group_id: str, target_timestamp: int) -> None:
-        """Remote-delete a message from a group."""
         await self._rpc("remoteDelete", {
             "groupId": group_id,
             "targetTimestamp": target_timestamp,
         })
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
-        """Mark one or more messages as read."""
         await self._rpc("sendReadReceipt", {
-            "recipient": sender,
+            "recipient": [sender],
             "targetTimestamps": timestamps,
         })
 
+    async def set_expiration_timer(
+        self, recipient: str | None = None, group_id: str | None = None, expiration: int = 0
+    ) -> None:
+        """Set disappearing message timer (seconds). 0 disables."""
+        if group_id:
+            await self.update_group(group_id, expiration_seconds=expiration)
+        elif recipient:
+            await self._rpc("updateContact", {
+                "recipient": recipient,
+                "expiration": expiration,
+            })
+        else:
+            raise SignalError("Either recipient or group_id must be provided")
+
     async def update_contact(self, number: str, name: str) -> None:
-        """Set a local display name for a contact."""
         await self._rpc("updateContact", {
             "recipient": number,
             "name": name,
         })
 
     async def leave_group(self, group_id: str) -> None:
-        """Leave a Signal group."""
         await self._rpc("quitGroup", {"groupId": group_id})
 
     # ── Identity / safety numbers ─────────────────────────────────────────────
 
     async def list_identities(self, number: str | None = None) -> list[dict]:
-        """List identity keys and trust levels. Pass number to filter to one contact."""
         params = {"recipient": number} if number else {}
         result = await self._rpc("listIdentities", params or None)
         return result if isinstance(result, list) else [result] if result else []
 
     async def trust_identity(self, number: str, trust_all_known: bool = False, safety_number: str | None = None) -> None:
-        """Trust a contact's identity key (after verifying safety number)."""
         params: dict = {"recipient": number}
         if safety_number:
             params["verifiedSafetyNumber"] = safety_number
         else:
             params["trustAllKnownKeys"] = trust_all_known
         await self._rpc("trust", params)
-

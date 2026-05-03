@@ -20,6 +20,7 @@ class Message:
     timestamp: datetime
     attachments: list[Attachment] = field(default_factory=list)
     group_id: str | None = None
+    recipient: str | None = None  # set for outgoing DMs
     quote_id: str | None = None
     reactions: dict[str, str] = field(default_factory=dict)  # emoji -> sender
     is_read: bool = False
@@ -28,6 +29,7 @@ class Message:
         return {
             "id": self.id,
             "sender": self.sender,
+            "recipient": self.recipient,
             "body": self.body,
             "timestamp": self.timestamp.isoformat(),
             "attachments": [

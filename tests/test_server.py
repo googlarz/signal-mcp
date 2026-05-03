@@ -8,6 +8,7 @@ import pytest
 import respx
 import httpx
 
+import signal_mcp.store as _store_mod
 from signal_mcp.config import DAEMON_URL
 from signal_mcp.models import Message
 from signal_mcp.server import call_tool
@@ -19,7 +20,11 @@ def rpc_ok(result) -> dict:
 
 
 @pytest.fixture(autouse=True)
-def reset_client(monkeypatch):
+def reset_client(monkeypatch, tmp_path):
+    # Redirect store to temp DB and reset init flag for every test
+    monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(_store_mod, "_initialized", False)
+
     test_client = SignalClient(account="+10000000000")
     monkeypatch.setattr("signal_mcp.server._client", test_client)
     async def noop(): pass
@@ -102,11 +107,9 @@ async def test_tool_receive_empty():
     assert "[]" in result[0].text
 
 
-@respx.mock
 @pytest.mark.asyncio
 async def test_tool_get_unread_empty():
-    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([])))
-    result = await call_tool("get_unread", {"timeout": 1})
+    result = await call_tool("get_unread", {})
     assert "[]" in result[0].text
 
 
@@ -127,10 +130,7 @@ async def test_tool_import_desktop_missing_db():
 
 
 @pytest.mark.asyncio
-async def test_tool_list_conversations_empty(tmp_path, monkeypatch):
-    import signal_mcp.store as store
-    monkeypatch.setattr(store, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr("signal_mcp.server._store", store)
+async def test_tool_list_conversations_empty():
     result = await call_tool("list_conversations", {})
     assert "[]" in result[0].text
 

@@ -1,6 +1,7 @@
 """MCP server exposing all Signal tools to Claude."""
 
 import json
+from datetime import datetime
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -13,7 +14,11 @@ app = Server("signal-mcp")
 
 _client: SignalClient | None = None
 
-_DAEMON_FREE = {"import_desktop", "store_stats", "list_conversations"}
+# Tools that don't need the signal-cli daemon (read from local store only)
+_DAEMON_FREE = {
+    "import_desktop", "store_stats", "list_conversations",
+    "get_conversation", "search_messages", "get_unread",
+}
 
 
 def get_client() -> SignalClient:
@@ -80,12 +85,13 @@ TOOLS = [
     ),
     Tool(
         name="get_conversation",
-        description="Get recent message history with a contact or group",
+        description="Get recent message history with a contact or group from local store",
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number or group ID"},
                 "limit": {"type": "integer", "description": "Max messages to return (default: 50)", "default": 50},
+                "since": {"type": "string", "description": "Only messages after this ISO datetime (e.g. 2024-01-01T00:00:00)"},
             },
             "required": ["recipient"],
         },
@@ -108,24 +114,38 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
-                "path": {"type": "string", "description": "Absolute local file path"},
+                "path": {"type": "string", "description": "File path (absolute, relative, or ~/path)"},
                 "caption": {"type": "string", "description": "Optional caption text", "default": ""},
             },
             "required": ["recipient", "path"],
         },
     ),
     Tool(
-        name="react_to_message",
-        description="React to a Signal message with an emoji",
+        name="send_group_attachment",
+        description="Send a file or image to a Signal group",
         inputSchema={
             "type": "object",
             "properties": {
-                "recipient": {"type": "string", "description": "Phone number of the conversation"},
+                "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
+                "path": {"type": "string", "description": "File path (absolute, relative, or ~/path)"},
+                "caption": {"type": "string", "description": "Optional caption text", "default": ""},
+            },
+            "required": ["group_id", "path"],
+        },
+    ),
+    Tool(
+        name="react_to_message",
+        description="React to a Signal message with an emoji (DM or group)",
+        inputSchema={
+            "type": "object",
+            "properties": {
                 "target_author": {"type": "string", "description": "Phone number of the message author"},
                 "target_timestamp": {"type": "integer", "description": "Timestamp of the message to react to"},
                 "emoji": {"type": "string", "description": "Emoji to react with (e.g. '👍')"},
+                "recipient": {"type": "string", "description": "Phone number for DM reactions"},
+                "group_id": {"type": "string", "description": "Group ID for group reactions"},
             },
-            "required": ["recipient", "target_author", "target_timestamp", "emoji"],
+            "required": ["target_author", "target_timestamp", "emoji"],
         },
     ),
     Tool(
@@ -169,25 +189,12 @@ TOOLS = [
     ),
     Tool(
         name="get_unread",
-        description="Get unread messages (polls once with short timeout)",
+        description="Get messages not yet marked as read from local store",
         inputSchema={
             "type": "object",
             "properties": {
-                "timeout": {"type": "integer", "description": "Seconds to wait (default: 2)", "default": 2},
+                "limit": {"type": "integer", "description": "Max messages to return (default: 50)", "default": 50},
             },
-        },
-    ),
-    Tool(
-        name="send_group_attachment",
-        description="Send a file or image to a Signal group",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
-                "path": {"type": "string", "description": "Absolute local file path"},
-                "caption": {"type": "string", "description": "Optional caption text", "default": ""},
-            },
-            "required": ["group_id", "path"],
         },
     ),
     Tool(
@@ -249,6 +256,22 @@ TOOLS = [
         },
     ),
     Tool(
+        name="update_group",
+        description="Update a group's name, description, members, or expiration timer",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID to update"},
+                "name": {"type": "string", "description": "New group name"},
+                "description": {"type": "string", "description": "New group description"},
+                "add_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to add"},
+                "remove_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to remove"},
+                "expiration_seconds": {"type": "integer", "description": "Disappearing message timer in seconds (0 to disable)"},
+            },
+            "required": ["group_id"],
+        },
+    ),
+    Tool(
         name="leave_group",
         description="Leave a Signal group",
         inputSchema={
@@ -257,6 +280,19 @@ TOOLS = [
                 "group_id": {"type": "string", "description": "Group ID to leave"},
             },
             "required": ["group_id"],
+        },
+    ),
+    Tool(
+        name="set_expiration_timer",
+        description="Set or disable the disappearing message timer for a conversation",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "expiration_seconds": {"type": "integer", "description": "Timer in seconds (0 to disable). Common: 3600=1h, 86400=1d, 604800=1w"},
+                "recipient": {"type": "string", "description": "Phone number for a direct conversation"},
+                "group_id": {"type": "string", "description": "Group ID for a group conversation"},
+            },
+            "required": ["expiration_seconds"],
         },
     ),
     Tool(
@@ -306,8 +342,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok({"status": "sent", "timestamp": result.timestamp, "group_id": result.recipient})
 
         elif name == "receive_messages":
-            timeout = arguments.get("timeout", 5)
-            messages = await client.receive_messages(timeout=timeout)
+            messages = await client.receive_messages(timeout=arguments.get("timeout", 5))
             return _ok([m.to_dict() for m in messages])
 
         elif name == "list_contacts":
@@ -319,9 +354,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok([g.to_dict() for g in groups])
 
         elif name == "get_conversation":
+            since = None
+            if arguments.get("since"):
+                try:
+                    since = datetime.fromisoformat(arguments["since"])
+                except ValueError:
+                    return _err(f"Invalid since date: {arguments['since']}")
             messages = await client.get_conversation(
                 arguments["recipient"],
                 limit=arguments.get("limit", 50),
+                since=since,
             )
             return _ok([m.to_dict() for m in messages])
 
@@ -347,10 +389,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "react_to_message":
             await client.react_to_message(
-                arguments["recipient"],
-                arguments["target_author"],
-                arguments["target_timestamp"],
-                arguments["emoji"],
+                target_author=arguments["target_author"],
+                target_timestamp=arguments["target_timestamp"],
+                emoji=arguments["emoji"],
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
             )
             return _ok({"status": "reaction sent"})
 
@@ -367,10 +410,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok({"status": "blocked", "number": arguments["number"]})
 
         elif name == "get_unread":
-            timeout = arguments.get("timeout", 2)
-            messages = await client.receive_messages(timeout=timeout)
-            unread = [m.to_dict() for m in messages if not m.is_read]
-            return _ok(unread)
+            messages = client.get_unread_messages(limit=arguments.get("limit", 50))
+            return _ok([m.to_dict() for m in messages])
 
         elif name == "store_stats":
             return _ok(_store.get_stats())
@@ -402,9 +443,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             await client.update_contact(arguments["number"], arguments["name"])
             return _ok({"status": "contact updated", "number": arguments["number"], "name": arguments["name"]})
 
+        elif name == "update_group":
+            await client.update_group(
+                arguments["group_id"],
+                name=arguments.get("name"),
+                description=arguments.get("description"),
+                add_members=arguments.get("add_members"),
+                remove_members=arguments.get("remove_members"),
+                expiration_seconds=arguments.get("expiration_seconds"),
+            )
+            return _ok({"status": "group updated", "group_id": arguments["group_id"]})
+
         elif name == "leave_group":
             await client.leave_group(arguments["group_id"])
             return _ok({"status": "left group", "group_id": arguments["group_id"]})
+
+        elif name == "set_expiration_timer":
+            await client.set_expiration_timer(
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+                expiration=arguments["expiration_seconds"],
+            )
+            return _ok({"status": "expiration timer set", "seconds": arguments["expiration_seconds"]})
 
         elif name == "list_identities":
             identities = await client.list_identities(number=arguments.get("number"))
@@ -428,5 +488,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def serve() -> None:
+    _store.init_db()
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
