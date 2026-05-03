@@ -45,12 +45,6 @@ brew install sqlcipher
 ## Install
 
 ```bash
-# From PyPI (once configured — see below)
-pip install signal-mcp
-# or
-uv tool install signal-mcp
-
-# From source
 git clone https://github.com/googlarz/signal-mcp
 cd signal-mcp
 uv tool install .
