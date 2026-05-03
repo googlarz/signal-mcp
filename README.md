@@ -45,9 +45,9 @@ brew install sqlcipher
 ## Install
 
 ```bash
-pip install signal-mcp
-# or with uv (recommended)
-uv tool install signal-mcp
+git clone https://github.com/googlarz/signal-mcp
+cd signal-mcp
+uv tool install .
 ```
 
 ## Connect to Claude Code
@@ -70,14 +70,14 @@ Or manually add to `~/.claude.json`:
 }
 ```
 
-Or per-project in `.mcp.json`:
+Or per-project in `.mcp.json` (point to your clone):
 
 ```json
 {
   "mcpServers": {
     "signal": {
-      "command": "uvx",
-      "args": ["signal-mcp", "serve"]
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/signal-mcp", "signal-mcp", "serve"]
     }
   }
 }
