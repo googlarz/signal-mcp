@@ -1,5 +1,6 @@
 """Configuration: auto-detect Signal account, daemon URL, attachment dir."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -8,16 +9,35 @@ DAEMON_URL = f"http://localhost:{DAEMON_PORT}/api/v1/rpc"
 ATTACHMENT_DIR = Path.home() / "Downloads" / "signal-attachments"
 DAEMON_PID_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "daemon.pid"
 
+# signal-cli stores account data here
+_ACCOUNTS_JSON = Path.home() / ".local" / "share" / "signal-cli" / "data" / "accounts.json"
 
 _account_cache: str | None = None
 
 
 def detect_account() -> str:
-    """Auto-detect linked Signal account number from signal-cli (result is cached)."""
+    """Auto-detect linked Signal account number (cached).
+
+    Reads accounts.json directly to avoid a slow signal-cli JVM cold-start.
+    Falls back to `signal-cli listAccounts` if the file is missing.
+    """
     global _account_cache
     if _account_cache is not None:
         return _account_cache
 
+    # Fast path: parse accounts.json without spawning signal-cli
+    if _ACCOUNTS_JSON.exists():
+        try:
+            data = json.loads(_ACCOUNTS_JSON.read_text())
+            for acc in data.get("accounts", []):
+                number = acc.get("number", "")
+                if number.startswith("+"):
+                    _account_cache = number
+                    return _account_cache
+        except Exception:
+            pass  # fall through to signal-cli
+
+    # Slow fallback: spawn signal-cli (takes ~15s on cold JVM start)
     result = subprocess.run(
         ["signal-cli", "listAccounts"],
         capture_output=True,
@@ -28,7 +48,6 @@ def detect_account() -> str:
 
     for line in result.stdout.splitlines():
         line = line.strip()
-        # signal-cli output is either "Number: +E164" or bare "+E164"
         if line.startswith("Number:"):
             _account_cache = line.split(":", 1)[1].strip()
             return _account_cache
