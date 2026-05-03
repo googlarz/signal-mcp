@@ -590,3 +590,97 @@ async def test_rpc_retries_on_connect_error(client):
     with pytest.raises(SignalError, match="daemon not running"):
         await client.send_message("+19999999999", "hi")
     assert call_count == 2  # initial + 1 retry
+
+
+# ── New features ──────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_sticker_rpc_params(client):
+    """send_sticker passes pack_id:sticker_id as sticker param."""
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 5})))
+    result = await client.send_sticker("+19999999999", "aabbcc", 3)
+    body = route.calls[0].request.read()
+    import json
+    params = json.loads(body)["params"]
+    assert params["sticker"] == "aabbcc:3"
+    assert params["recipient"] == ["+19999999999"]
+    assert result.success is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_sticker_rpc_params(client):
+    """send_group_sticker passes groupId and sticker param."""
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 6})))
+    await client.send_group_sticker("grp1==", "aabbcc", 0)
+    body = route.calls[0].request.read()
+    import json
+    params = json.loads(body)["params"]
+    assert params["sticker"] == "aabbcc:0"
+    assert params["groupId"] == "grp1=="
+
+
+@pytest.mark.asyncio
+async def test_list_attachments_empty(client, tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", tmp_path / "no-such-dir")
+    assert client.list_attachments() == []
+
+
+@pytest.mark.asyncio
+async def test_list_attachments_lists_files(client, tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    att_dir = tmp_path / "att"
+    att_dir.mkdir()
+    (att_dir / "img.png").write_bytes(b"z" * 50)
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
+    files = client.list_attachments()
+    assert len(files) == 1
+    assert files[0]["filename"] == "img.png"
+    assert files[0]["size"] == 50
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_not_found_raises(client, tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    att_dir = tmp_path / "att"
+    att_dir.mkdir()
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
+    with pytest.raises(SignalError, match="not found"):
+        client.get_attachment("ghost.jpg")
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_auto_marks_read(client):
+    """get_conversation marks received messages as read."""
+    from datetime import datetime
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="rx1", sender="+19999999999", body="hey",
+        timestamp=datetime(2024, 6, 1), is_read=False,
+    ))
+    msgs_before = _store_mod.get_conversation("+19999999999")
+    assert not msgs_before[0].is_read
+    await client.get_conversation("+19999999999")
+    msgs_after = _store_mod.get_conversation("+19999999999")
+    assert msgs_after[0].is_read
+
+
+@pytest.mark.asyncio
+async def test_resolve_name_returns_display_name(client, monkeypatch):
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "_contact_cache", {"+19999999999": "Bob"})
+    assert client.resolve_name("+19999999999") == "Bob"
+    assert client.resolve_name("+10000000001") == "+10000000001"  # unknown → number
+
+
+@pytest.mark.asyncio
+async def test_enrich_message_adds_sender_name(client, monkeypatch):
+    from datetime import datetime
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "_contact_cache", {"+19999999999": "Carol"})
+    msg = Message(id="x", sender="+19999999999", body="hi", timestamp=datetime(2024, 1, 1))
+    d = client._enrich_message(msg)
+    assert d["sender_name"] == "Carol"
+    assert d["body"] == "hi"

@@ -426,3 +426,107 @@ async def test_tool_get_conversation_pagination():
     assert len(all_msgs) == 5
     assert len(page1) == 3
     assert len(page2) == 2
+
+
+# ── New tools ─────────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_sticker():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 9})))
+    result = await call_tool("send_sticker", {
+        "recipient": "+19999999999",
+        "pack_id": "aabbcc",
+        "sticker_id": 3,
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "sent"
+    assert data["timestamp"] == 9
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_group_sticker():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 10})))
+    result = await call_tool("send_group_sticker", {
+        "group_id": "grp1==",
+        "pack_id": "aabbcc",
+        "sticker_id": 0,
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "sent"
+
+
+@pytest.mark.asyncio
+async def test_tool_list_attachments_empty(tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", tmp_path / "no-such-dir")
+    result = await call_tool("list_attachments", {})
+    assert json.loads(result[0].text) == []
+
+
+@pytest.mark.asyncio
+async def test_tool_list_attachments_returns_files(tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    att_dir = tmp_path / "attachments"
+    att_dir.mkdir()
+    (att_dir / "photo.jpg").write_bytes(b"x" * 100)
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
+    result = await call_tool("list_attachments", {})
+    files = json.loads(result[0].text)
+    assert len(files) == 1
+    assert files[0]["filename"] == "photo.jpg"
+    assert files[0]["size"] == 100
+
+
+@pytest.mark.asyncio
+async def test_tool_get_attachment(tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    att_dir = tmp_path / "attachments"
+    att_dir.mkdir()
+    (att_dir / "file.pdf").write_bytes(b"y" * 42)
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
+    result = await call_tool("get_attachment", {"filename": "file.pdf"})
+    data = json.loads(result[0].text)
+    assert data["filename"] == "file.pdf"
+    assert data["size"] == 42
+
+
+@pytest.mark.asyncio
+async def test_tool_get_attachment_not_found(tmp_path, monkeypatch):
+    import signal_mcp.client as _client_mod
+    att_dir = tmp_path / "attachments"
+    att_dir.mkdir()
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
+    result = await call_tool("get_attachment", {"filename": "missing.jpg"})
+    assert "Error" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_auto_marks_read():
+    """get_conversation should auto-mark received messages as read."""
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="msg_unread", sender="+19999999999", body="hello",
+        timestamp=datetime(2024, 1, 1), is_read=False,
+    ))
+    await call_tool("get_conversation", {"recipient": "+19999999999"})
+    # Re-fetch from store — should now be marked read
+    msgs = _store_mod.get_conversation("+19999999999")
+    assert all(m.is_read for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_enriches_sender_name(monkeypatch):
+    """get_conversation response includes sender_name field."""
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "_contact_cache", {"+19999999999": "Alice"})
+    monkeypatch.setattr(_client_mod, "_contact_cache_loaded", True)
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="msg_alice", sender="+19999999999", body="hi",
+        timestamp=datetime(2024, 1, 1),
+    ))
+    result = await call_tool("get_conversation", {"recipient": "+19999999999"})
+    msgs = json.loads(result[0].text)
+    assert msgs[0]["sender_name"] == "Alice"

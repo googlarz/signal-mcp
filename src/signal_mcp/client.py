@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 
 from .config import (
+    ATTACHMENT_DIR,
     DAEMON_PORT,
     DAEMON_URL,
     clear_daemon_pid,
@@ -31,12 +32,17 @@ class SignalError(Exception):
 
 _rpc_id = itertools.count(1)
 
+# Module-level contact name cache: number → display_name
+_contact_cache: dict[str, str] = {}
+_contact_cache_loaded: bool = False
+
 
 class SignalClient:
     def __init__(self, account: str | None = None, daemon_url: str = DAEMON_URL):
         self._account = account
         self._daemon_url = daemon_url
         self._http = httpx.AsyncClient(timeout=10.0)
+        self._rpc_lock = asyncio.Lock()
 
     @property
     def account(self) -> str:
@@ -126,6 +132,20 @@ class SignalClient:
         except Exception:
             return False
 
+    async def prewarm(self) -> None:
+        """Start daemon in background without blocking. Called at server startup."""
+        asyncio.create_task(self.ensure_daemon())
+
+    async def watchdog(self) -> None:
+        """Periodically check daemon health and restart if dead. Runs forever."""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if not await self._daemon_alive():
+                    await self.ensure_daemon()
+            except Exception:
+                pass  # best-effort; never crash the server
+
     # ── JSON-RPC core ─────────────────────────────────────────────────────────
 
     async def _rpc(self, method: str, params: dict | None = None) -> dict:
@@ -137,16 +157,17 @@ class SignalClient:
         if params:
             payload["params"] = params
 
-        for attempt in range(2):
-            try:
-                r = await self._http.post(self._daemon_url, json=payload)
-                r.raise_for_status()
-                break
-            except httpx.ConnectError:
-                if attempt == 0:
-                    await asyncio.sleep(0.5)
-        else:
-            raise SignalError("signal-cli daemon not running. Run: signal-mcp daemon")
+        async with self._rpc_lock:
+            for attempt in range(2):
+                try:
+                    r = await self._http.post(self._daemon_url, json=payload)
+                    r.raise_for_status()
+                    break
+                except httpx.ConnectError:
+                    if attempt == 0:
+                        await asyncio.sleep(0.5)
+            else:
+                raise SignalError("signal-cli daemon not running. Run: signal-mcp daemon")
 
         body = r.json()
         if "error" in body:
@@ -248,6 +269,61 @@ class SignalClient:
         ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
+    async def send_sticker(
+        self, recipient: str, pack_id: str, sticker_id: int
+    ) -> SendResult:
+        """Send a sticker to a contact."""
+        params: dict = {
+            "recipient": [recipient],
+            "sticker": f"{pack_id}:{sticker_id}",
+        }
+        result = await self._rpc("send", params)
+        ts = result.get("timestamp", int(time.time() * 1000))
+        return SendResult(timestamp=ts, recipient=recipient, success=True)
+
+    async def send_group_sticker(
+        self, group_id: str, pack_id: str, sticker_id: int
+    ) -> SendResult:
+        """Send a sticker to a group."""
+        params: dict = {
+            "groupId": group_id,
+            "sticker": f"{pack_id}:{sticker_id}",
+        }
+        result = await self._rpc("send", params)
+        ts = result.get("timestamp", int(time.time() * 1000))
+        return SendResult(timestamp=ts, recipient=group_id, success=True)
+
+    def list_attachments(self) -> list[dict]:
+        """List all downloaded attachments in the attachments directory."""
+        att_dir = ATTACHMENT_DIR
+        if not att_dir.exists():
+            return []
+        files = []
+        for p in sorted(att_dir.iterdir()):
+            if p.is_file():
+                stat = p.stat()
+                files.append({
+                    "filename": p.name,
+                    "path": str(p),
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                })
+        return files
+
+    def get_attachment(self, filename: str) -> dict:
+        """Get info about a specific downloaded attachment by filename."""
+        att_dir = ATTACHMENT_DIR
+        path = att_dir / filename
+        if not path.exists():
+            raise SignalError(f"Attachment not found: {filename}")
+        stat = path.stat()
+        return {
+            "filename": path.name,
+            "path": str(path),
+            "size": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        }
+
     async def set_typing(self, recipient: str, stop: bool = False) -> None:
         action = "STOPPED" if stop else "STARTED"
         await self._rpc("sendTyping", {"recipient": [recipient], "action": action})
@@ -334,6 +410,34 @@ class SignalClient:
             group_id=data_message.get("groupInfo", {}).get("groupId"),
             quote_id=str(quote["id"]) if quote.get("id") else None,
         )
+
+    # ── Contact name resolution ───────────────────────────────────────────────
+
+    async def _ensure_contact_cache(self) -> None:
+        """Load contacts into module-level cache (runs once per process)."""
+        global _contact_cache, _contact_cache_loaded
+        if _contact_cache_loaded:
+            return
+        try:
+            contacts = await self.list_contacts()
+            for c in contacts:
+                if c.number:
+                    _contact_cache[c.number] = c.display_name
+        except Exception:
+            pass
+        _contact_cache_loaded = True
+
+    def resolve_name(self, number: str) -> str:
+        """Return display name for a number, or the number itself if unknown."""
+        return _contact_cache.get(number, number)
+
+    def _enrich_message(self, msg: Message) -> dict:
+        """Convert message to dict and replace numbers with display names."""
+        d = msg.to_dict()
+        d["sender_name"] = self.resolve_name(msg.sender)
+        if msg.recipient:
+            d["recipient_name"] = self.resolve_name(msg.recipient)
+        return d
 
     # ── Contacts ──────────────────────────────────────────────────────────────
 
@@ -489,7 +593,15 @@ class SignalClient:
     async def get_conversation(
         self, recipient: str, limit: int = 50, offset: int = 0, since: datetime | None = None
     ) -> list[Message]:
-        return _store.get_conversation(recipient, limit=limit, offset=offset, since=since)
+        messages = _store.get_conversation(recipient, limit=limit, offset=offset, since=since)
+        # Auto-mark received messages as read (like every Signal client does)
+        unread_ids = [m.id for m in messages if not m.is_read and m.sender != self.account]
+        if unread_ids:
+            _store.mark_as_read(unread_ids)
+            for m in messages:
+                if m.id in unread_ids:
+                    m.is_read = True
+        return messages
 
     async def search_messages(self, query: str, limit: int = 50) -> list[Message]:
         return _store.search_messages(query, limit=limit)

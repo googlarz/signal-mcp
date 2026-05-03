@@ -1,6 +1,7 @@
 """Configuration: auto-detect Signal account, daemon URL, attachment dir."""
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -56,6 +57,35 @@ def detect_account() -> str:
             return _account_cache
 
     raise RuntimeError("No Signal account found. Run: signal-cli link --name 'MyDevice'")
+
+
+MIN_SIGNAL_CLI_VERSION = (0, 13, 0)
+
+
+def check_signal_cli_version() -> None:
+    """Raise RuntimeError if signal-cli is missing or too old."""
+    try:
+        result = subprocess.run(
+            ["signal-cli", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        match = re.search(r"(\d+)\.(\d+)\.(\d+)", result.stdout)
+        if not match:
+            raise RuntimeError("Could not parse signal-cli version")
+        version = tuple(int(x) for x in match.groups())
+        if version < MIN_SIGNAL_CLI_VERSION:
+            min_str = ".".join(str(x) for x in MIN_SIGNAL_CLI_VERSION)
+            raise RuntimeError(
+                f"signal-cli {'.'.join(str(x) for x in version)} is too old. "
+                f"Minimum required: {min_str}. "
+                "Upgrade: brew upgrade signal-cli"
+            )
+    except FileNotFoundError:
+        raise RuntimeError(
+            "signal-cli not found. Install it first:\n"
+            "  macOS:  brew install signal-cli\n"
+            "  Linux:  https://github.com/AsamK/signal-cli/releases"
+        )
 
 
 def ensure_attachment_dir() -> Path:

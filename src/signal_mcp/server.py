@@ -1,5 +1,6 @@
 """MCP server exposing all Signal tools to Claude."""
 
+import asyncio
 import json
 from datetime import datetime
 
@@ -8,6 +9,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from .client import SignalClient, SignalError
+from .config import check_signal_cli_version
 from . import store as _store
 
 app = Server("signal-mcp")
@@ -18,6 +20,7 @@ _client: SignalClient | None = None
 _DAEMON_FREE = {
     "import_desktop", "store_stats", "list_conversations",
     "get_conversation", "search_messages", "get_unread", "get_own_number",
+    "list_attachments", "get_attachment",
 }
 
 
@@ -457,6 +460,52 @@ TOOLS = [
 ]
 
 
+TOOLS += [
+    Tool(
+        name="send_sticker",
+        description="Send a sticker to a Signal contact",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "recipient": {"type": "string", "description": "Phone number in E.164 format"},
+                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string)"},
+                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack"},
+            },
+            "required": ["recipient", "pack_id", "sticker_id"],
+        },
+    ),
+    Tool(
+        name="send_group_sticker",
+        description="Send a sticker to a Signal group",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID"},
+                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string)"},
+                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack"},
+            },
+            "required": ["group_id", "pack_id", "sticker_id"],
+        },
+    ),
+    Tool(
+        name="list_attachments",
+        description="List all downloaded attachments saved locally (photos, files received via Signal)",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="get_attachment",
+        description="Get details about a specific downloaded attachment by filename",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Attachment filename (get from list_attachments)"},
+            },
+            "required": ["filename"],
+        },
+    ),
+]
+
+
 @app.list_tools()
 async def list_tools() -> list[Tool]:
     return TOOLS
@@ -500,9 +549,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
             return _ok({"status": "message edited", "target_timestamp": arguments["target_timestamp"]})
 
+        elif name == "send_sticker":
+            result = await client.send_sticker(
+                arguments["recipient"], arguments["pack_id"], arguments["sticker_id"]
+            )
+            return _ok({"status": "sent", "timestamp": result.timestamp})
+
+        elif name == "send_group_sticker":
+            result = await client.send_group_sticker(
+                arguments["group_id"], arguments["pack_id"], arguments["sticker_id"]
+            )
+            return _ok({"status": "sent", "timestamp": result.timestamp})
+
+        elif name == "list_attachments":
+            return _ok(client.list_attachments())
+
+        elif name == "get_attachment":
+            return _ok(client.get_attachment(arguments["filename"]))
+
         elif name == "receive_messages":
+            await client._ensure_contact_cache()
             messages = await client.receive_messages(timeout=arguments.get("timeout", 5))
-            return _ok([m.to_dict() for m in messages])
+            return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "list_contacts":
             contacts = await client.list_contacts()
@@ -519,17 +587,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     since = datetime.fromisoformat(arguments["since"])
                 except ValueError:
                     return _err(f"Invalid since date: {arguments['since']}")
+            await client._ensure_contact_cache()
             messages = await client.get_conversation(
                 arguments["recipient"],
                 limit=arguments.get("limit", 50),
                 offset=arguments.get("offset", 0),
                 since=since,
             )
-            return _ok([m.to_dict() for m in messages])
+            return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "search_messages":
+            await client._ensure_contact_cache()
             messages = await client.search_messages(arguments["query"])
-            return _ok([m.to_dict() for m in messages])
+            return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "send_attachment":
             result = await client.send_attachment(
@@ -616,8 +686,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok({"number": client.get_own_number()})
 
         elif name == "get_unread":
+            await client._ensure_contact_cache()
             messages = client.get_unread_messages(limit=arguments.get("limit", 50))
-            return _ok([m.to_dict() for m in messages])
+            return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "store_stats":
             return _ok(_store.get_stats())
@@ -696,6 +767,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def serve() -> None:
+    check_signal_cli_version()
     _store.init_db()
+    client = get_client()
+    # Pre-warm: start daemon in background so first tool call doesn't cold-start
+    await client.prewarm()
+    # Pre-load contact names so responses include display names from the start
+    asyncio.create_task(client._ensure_contact_cache())
+    # Watchdog: auto-restart daemon if it crashes
+    asyncio.create_task(client.watchdog())
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
