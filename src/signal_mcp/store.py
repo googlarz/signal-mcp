@@ -16,6 +16,8 @@ def _connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -56,6 +58,8 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_sender    ON messages(sender);
             CREATE INDEX IF NOT EXISTS idx_messages_group     ON messages(group_id);
             CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_messages_sender_ts    ON messages(sender, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_messages_group_ts     ON messages(group_id, timestamp);
             CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                 id UNINDEXED,
                 body,
@@ -77,9 +81,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE messages ADD COLUMN recipient TEXT")
         except sqlite3.OperationalError:
             pass  # column already exists
-        # Index on recipient must be created after migration (column may have just been added)
+        # Indexes on recipient must be created after migration (column may have just been added)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_recipient_ts ON messages(recipient, timestamp)"
         )
     _initialized = True
 

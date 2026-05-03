@@ -2,6 +2,17 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.4.1] — 2026-05-03
+
+### Performance
+
+- **SQLite WAL mode** — `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL` on every connection; eliminates writer-reader contention and makes concurrent reads non-blocking
+- **Compound indexes** — added `(sender, timestamp)`, `(recipient, timestamp)`, `(group_id, timestamp)` indexes; `get_conversation` no longer needs a full table scan to sort messages
+- **Concurrent RPC** — `asyncio.Lock` replaced with `asyncio.Semaphore(4)`; up to 4 RPCs can run simultaneously (e.g. a long `receive_messages` poll no longer blocks all other tools)
+- **Per-call HTTP timeouts** — `_rpc()` now accepts a `timeout` parameter (default 10 s); `receive_messages` passes `poll_timeout + 5 s` so it never races against its own poll window; health-check pings use 3 s
+- **Contact cache TTL** — cache now expires after 5 minutes (`_CACHE_TTL = 300 s`); contact name changes are reflected mid-session instead of being frozen for the entire server lifetime
+- **Non-blocking SQLite** — all store calls inside async methods are now wrapped with `asyncio.to_thread`; the event loop is no longer blocked during DB reads/writes (`get_conversation`, `search_messages`, `save_message`, `mark_as_read`, …)
+
 ## [1.4.0] — 2026-05-03
 
 ### Performance

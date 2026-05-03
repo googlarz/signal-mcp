@@ -687,7 +687,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "get_unread":
             await client._ensure_contact_cache()
-            messages = client.get_unread_messages(limit=arguments.get("limit", 50))
+            messages = await client.get_unread_messages(limit=arguments.get("limit", 50))
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "store_stats":
@@ -702,7 +702,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return _err(str(e))
 
         elif name == "list_conversations":
-            return _ok(client.list_conversations())
+            return _ok(await client.list_conversations())
 
         elif name == "delete_message":
             await client.delete_message(arguments["recipient"], arguments["target_timestamp"])

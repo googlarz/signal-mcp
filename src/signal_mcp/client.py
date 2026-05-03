@@ -35,15 +35,17 @@ _rpc_id = itertools.count(1)
 # Module-level contact name cache: number → display_name
 _contact_cache: dict[str, str] = {}
 _contact_cache_loaded: bool = False
+_contact_cache_at: float = 0.0
+_CACHE_TTL: float = 300.0  # refresh every 5 minutes
 
 
 class SignalClient:
     def __init__(self, account: str | None = None, daemon_url: str = DAEMON_URL):
         self._account = account
         self._daemon_url = daemon_url
-        self._http = httpx.AsyncClient(timeout=10.0)
-        self._rpc_lock = asyncio.Lock()
-        self._daemon_lock = asyncio.Lock()  # single-flight guard for ensure_daemon
+        self._http = httpx.AsyncClient()  # timeouts are set per-request in _rpc()
+        self._rpc_sem = asyncio.Semaphore(4)   # allow up to 4 concurrent RPCs
+        self._daemon_lock = asyncio.Lock()      # single-flight guard for ensure_daemon
         self._background_tasks: list[asyncio.Task] = []
 
     @property
@@ -140,6 +142,7 @@ class SignalClient:
             r = await self._http.post(
                 self._daemon_url,
                 json={"jsonrpc": "2.0", "method": "version", "id": 0},
+                timeout=3.0,
             )
             return r.status_code == 200
         except Exception:
@@ -165,7 +168,7 @@ class SignalClient:
 
     # ── JSON-RPC core ─────────────────────────────────────────────────────────
 
-    async def _rpc(self, method: str, params: dict | None = None) -> dict:
+    async def _rpc(self, method: str, params: dict | None = None, timeout: float = 10.0) -> dict:
         payload: dict = {
             "jsonrpc": "2.0",
             "method": method,
@@ -174,10 +177,12 @@ class SignalClient:
         if params:
             payload["params"] = params
 
-        async with self._rpc_lock:
+        async with self._rpc_sem:
             for attempt in range(2):
                 try:
-                    r = await self._http.post(self._daemon_url, json=payload)
+                    r = await self._http.post(
+                        self._daemon_url, json=payload, timeout=timeout
+                    )
                     r.raise_for_status()
                     break
                 except httpx.ConnectError:
@@ -206,7 +211,7 @@ class SignalClient:
             params["quoteTimestamp"] = quote_timestamp
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
-        _store.save_message(Message(
+        await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{recipient}",
             sender=self.account,
             recipient=recipient,
@@ -232,7 +237,7 @@ class SignalClient:
             params["quoteTimestamp"] = quote_timestamp
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
-        _store.save_message(Message(
+        await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{group_id}",
             sender=self.account,
             body=message,
@@ -257,7 +262,7 @@ class SignalClient:
             params["viewOnce"] = True
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
-        _store.save_message(Message(
+        await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{recipient}",
             sender=self.account,
             recipient=recipient,
@@ -277,7 +282,7 @@ class SignalClient:
             params["viewOnce"] = True
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
-        _store.save_message(Message(
+        await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{group_id}",
             sender=self.account,
             body=caption,
@@ -296,7 +301,7 @@ class SignalClient:
         }
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
-        _store.save_message(Message(
+        await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{recipient}",
             sender=self.account,
             recipient=recipient,
@@ -315,7 +320,7 @@ class SignalClient:
         }
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
-        _store.save_message(Message(
+        await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{group_id}",
             sender=self.account,
             body=f"[sticker {pack_id}:{sticker_id}]",
@@ -385,13 +390,13 @@ class SignalClient:
 
     async def receive_messages(self, timeout: int = 5) -> list[Message]:
         """Poll for new messages and persist them to local store."""
-        result = await self._rpc("receive", {"timeout": timeout})
+        result = await self._rpc("receive", {"timeout": timeout}, timeout=timeout + 5.0)
         messages = []
         for envelope in result if isinstance(result, list) else []:
             msg = self._parse_envelope(envelope)
             if msg:
                 if not msg.receipt_type:
-                    _store.save_message(msg)
+                    await asyncio.to_thread(_store.save_message, msg)
                 messages.append(msg)
         return messages
 
@@ -452,17 +457,20 @@ class SignalClient:
 
         Only marks the cache as loaded on success — failures allow retry on
         next call so a cold-start race (daemon not yet up) doesn't permanently
-        freeze the cache empty.
+        freeze the cache empty.  Cache expires after _CACHE_TTL seconds so
+        contact name changes are picked up mid-session.
         """
-        global _contact_cache, _contact_cache_loaded
-        if _contact_cache_loaded:
+        global _contact_cache, _contact_cache_loaded, _contact_cache_at
+        now = time.monotonic()
+        if _contact_cache_loaded and (now - _contact_cache_at) < _CACHE_TTL:
             return
         try:
             contacts = await self.list_contacts()
             for c in contacts:
                 if c.number:
                     _contact_cache[c.number] = c.display_name
-            _contact_cache_loaded = True  # only set on success
+            _contact_cache_loaded = True   # only set on success
+            _contact_cache_at = time.monotonic()
         except Exception:
             pass  # will retry on next call
 
@@ -632,24 +640,26 @@ class SignalClient:
     async def get_conversation(
         self, recipient: str, limit: int = 50, offset: int = 0, since: datetime | None = None
     ) -> list[Message]:
-        messages = _store.get_conversation(recipient, limit=limit, offset=offset, since=since)
+        messages = await asyncio.to_thread(
+            _store.get_conversation, recipient, limit=limit, offset=offset, since=since
+        )
         # Auto-mark received messages as read (like every Signal client does)
         unread_ids = [m.id for m in messages if not m.is_read and m.sender != self.account]
         if unread_ids:
-            _store.mark_as_read(unread_ids)
+            await asyncio.to_thread(_store.mark_as_read, unread_ids)
             for m in messages:
                 if m.id in unread_ids:
                     m.is_read = True
         return messages
 
     async def search_messages(self, query: str, limit: int = 50) -> list[Message]:
-        return _store.search_messages(query, limit=limit)
+        return await asyncio.to_thread(_store.search_messages, query, limit=limit)
 
-    def list_conversations(self) -> list[dict]:
-        return _store.list_conversations(own_number=self.account)
+    async def list_conversations(self) -> list[dict]:
+        return await asyncio.to_thread(_store.list_conversations, own_number=self.account)
 
-    def get_unread_messages(self, limit: int = 50) -> list[Message]:
-        return _store.get_unread_messages(own_number=self.account, limit=limit)
+    async def get_unread_messages(self, limit: int = 50) -> list[Message]:
+        return await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)
 
     def get_own_number(self) -> str:
         return self.account
@@ -684,7 +694,7 @@ class SignalClient:
         else:
             params["recipient"] = [recipient]
         await self._rpc("editMessage", params)
-        _store.update_message_body(target_timestamp, message)
+        await asyncio.to_thread(_store.update_message_body, target_timestamp, message)
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
         await self._rpc("sendReadReceipt", {
@@ -692,7 +702,7 @@ class SignalClient:
             "targetTimestamps": timestamps,
         })
         # Mark as read in local store — received message IDs are str(timestamp_ms)
-        _store.mark_as_read([str(ts) for ts in timestamps])
+        await asyncio.to_thread(_store.mark_as_read, [str(ts) for ts in timestamps])
 
     async def set_expiration_timer(
         self, recipient: str | None = None, group_id: str | None = None, expiration: int = 0
