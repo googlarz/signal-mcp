@@ -101,19 +101,33 @@ Restart Claude Code. Signal tools appear automatically — ask Claude *"check my
 <details>
 <summary>Manual config alternatives</summary>
 
-Global (`~/.claude.json`):
+**Claude Code** — global (`~/.claude.json`):
 ```json
 {
   "mcpServers": {
     "signal": {
-      "command": "signal-mcp",
-      "args": ["serve"]
+      "command": "uvx",
+      "args": ["signal-mcp", "serve"]
     }
   }
 }
 ```
 
-Per-project (`.mcp.json`):
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "signal": {
+      "command": "uvx",
+      "args": ["signal-mcp", "serve"]
+    }
+  }
+}
+```
+
+> Claude Desktop uses a restricted PATH — `uvx` resolves the tool without needing `signal-mcp` on your shell's PATH.
+
+**Per-project** (`.mcp.json`):
 ```json
 {
   "mcpServers": {
