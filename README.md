@@ -15,7 +15,6 @@ Once connected, just ask Claude naturally:
 > *"Send Anna a message saying I'll be 10 minutes late"*
 > *"Search my Signal history for anything about the meeting"*
 > *"Show me all my conversations and who messaged me most recently"*
-> *"Translate my last 20 messages with Lars from German to English"*
 > *"Import all my old messages from Signal Desktop"*
 
 ## Features
@@ -41,9 +40,6 @@ signal-cli link --name "MyMac"
 
 # 3. (Optional) For Signal Desktop history import
 brew install sqlcipher
-
-# 4. (Optional) For CLI translation
-export ANTHROPIC_API_KEY="sk-ant-..."  # https://console.anthropic.com/
 ```
 
 ## Install
@@ -142,10 +138,6 @@ signal-mcp history +1234567890
 signal-mcp history +1234567890 --limit 20
 signal-mcp search "keyword"
 signal-mcp store-stats
-
-# Translation (requires ANTHROPIC_API_KEY)
-signal-mcp translate +1234567890
-signal-mcp translate +1234567890 --to German --limit 30
 
 # Signal Desktop import (macOS — full history)
 signal-mcp import-desktop

@@ -293,46 +293,6 @@ def import_desktop():
         sys.exit(1)
 
 
-# ── translate ─────────────────────────────────────────────────────────────────
-
-@cli.command()
-@click.argument("recipient")
-@click.option("--to", "target_lang", default="English", show_default=True, help="Target language")
-@click.option("--limit", default=20, show_default=True, help="Number of recent messages")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def translate(recipient: str, target_lang: str, limit: int, as_json: bool):
-    """Translate recent messages from RECIPIENT using Claude."""
-    from .translation import translate_messages, TranslationError
-    from . import store as _store
-
-    messages = _store.get_conversation(recipient, limit=limit)
-    if not messages:
-        click.echo("No stored messages found. Run: signal-mcp receive --watch")
-        return
-
-    click.echo(f"Translating {len(messages)} messages to {target_lang}…")
-    try:
-        results = translate_messages(messages, target_language=target_lang)
-    except TranslationError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-    if as_json:
-        click.echo(json.dumps(results, indent=2))
-    else:
-        for r in results:
-            ts = r.get("timestamp", "")[:16]
-            sender = r.get("sender", "?")
-            orig = r.get("original", "")
-            trans = r.get("translated", "")
-            if orig != trans:
-                click.echo(f"[{ts}] {sender}:")
-                click.echo(f"  DE: {orig}")
-                click.echo(f"  EN: {trans}")
-            else:
-                click.echo(f"[{ts}] {sender}: {orig}")
-
-
 # ── install-service ───────────────────────────────────────────────────────────
 
 PLIST_LABEL = "com.signal-mcp.watch"
