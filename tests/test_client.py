@@ -553,6 +553,15 @@ async def test_receive_message_parses_quote(client):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_send_group_attachment_saves_to_store(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1700000000000})))
+    await client.send_group_attachment("grp123", "/tmp/photo.jpg", caption="look!")
+    msgs = _store_mod.get_conversation("grp123")
+    assert any(m.group_id == "grp123" for m in msgs)
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_edit_message_updates_store(client):
     """edit_message must update the local store body."""
     from datetime import datetime as _dt

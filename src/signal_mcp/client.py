@@ -239,6 +239,13 @@ class SignalClient:
             params["viewOnce"] = True
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        _store.save_message(Message(
+            id=f"sent_{ts}_{group_id}",
+            sender=self.account,
+            body=caption,
+            timestamp=datetime.fromtimestamp(ts / 1000),
+            group_id=group_id,
+        ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
     async def set_typing(self, recipient: str, stop: bool = False) -> None:

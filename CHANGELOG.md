@@ -2,6 +2,17 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.3.2] — 2026-05-03
+
+### Bug fixes
+- `send_group_attachment` now saves sent record to local store (was inconsistent with `send_attachment`)
+- CLI `receive --watch` no longer prints blank lines for delivery/read receipts — shows a clean receipt indicator instead
+
+### Documentation
+- README CLI section updated with `note`, `edit`, and `--offset` / `--since` examples
+
+---
+
 ## [1.3.1] — 2026-05-03
 
 ### Bug fixes

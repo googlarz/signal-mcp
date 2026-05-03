@@ -94,6 +94,9 @@ def receive(watch: bool, timeout: int):
 
 
 def _print_message(msg):
+    if msg.receipt_type:
+        click.echo(f"[{msg.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] ← {msg.receipt_type} receipt from {msg.sender}")
+        return
     ts = msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
     group = f" [group:{msg.group_id[:8]}…]" if msg.group_id else ""
     click.echo(f"[{ts}]{group} {msg.sender}: {msg.body}")

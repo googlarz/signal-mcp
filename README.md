@@ -146,8 +146,13 @@ signal-mcp stop                            # stop the daemon
 # Send & receive
 signal-mcp send +1234567890 "Hello!"
 signal-mcp send-group <group_id> "Hey!"
+signal-mcp note "Remember to buy milk"     # save a note to yourself
 signal-mcp receive                         # poll once
 signal-mcp receive --watch                 # keep watching (saves to store)
+
+# Edit & delete
+signal-mcp edit +1234567890 <timestamp> "corrected text"
+signal-mcp edit <group_id> <timestamp> "corrected text"
 
 # Contacts & groups
 signal-mcp contacts
@@ -156,7 +161,8 @@ signal-mcp groups
 
 # History & search
 signal-mcp history +1234567890
-signal-mcp history +1234567890 --limit 20
+signal-mcp history +1234567890 --limit 20 --offset 20   # page 2
+signal-mcp history +1234567890 --since 2024-01-01
 signal-mcp search "keyword"
 signal-mcp store-stats
 
