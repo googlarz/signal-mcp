@@ -1,8 +1,7 @@
 # signal-mcp
 
 [![Tests](https://github.com/googlarz/signal-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/googlarz/signal-mcp/actions/workflows/test.yml)
-[![PyPI](https://img.shields.io/pypi/v/signal-mcp)](https://pypi.org/project/signal-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/signal-mcp)](https://pypi.org/project/signal-mcp/)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **The most complete Signal MCP server and CLI.** Let Claude send and receive Signal messages, manage contacts and groups, search history, and more — all running 100% locally via [signal-cli](https://github.com/AsamK/signal-cli).
@@ -28,21 +27,37 @@ Once connected, just ask Claude naturally:
 - **100% local** — no cloud, no third-party services, your data stays on your machine
 - **Auto-starts daemon** — no manual process management
 
-## Prerequisites
+## Setup
 
+### Step 1 — Install signal-cli
+
+signal-mcp is a front-end for [signal-cli](https://github.com/AsamK/signal-cli), which handles the Signal protocol.
+
+**macOS**
 ```bash
-# 1. Install signal-cli
 brew install signal-cli
-
-# 2. Link to your existing Signal account
-signal-cli link --name "MyMac"
-# Scan the QR code in Signal mobile: Settings → Linked Devices → +
-
-# 3. (Optional) For Signal Desktop history import
-brew install sqlcipher
 ```
 
-## Install
+**Linux**
+Download the latest release from [signal-cli releases](https://github.com/AsamK/signal-cli/releases), extract it, and put the `signal-cli` binary on your `$PATH`.
+
+### Step 2 — Link your Signal account
+
+signal-cli needs to be linked to your existing Signal account (the same way you'd add a new device in Signal mobile).
+
+```bash
+signal-cli link --name "MyMac"
+```
+
+This prints a `sgnl://` URI and a QR code in your terminal. On your phone:
+
+> **Signal** → Settings → Linked Devices → **+** → scan the QR code
+
+Once scanned, signal-cli is linked and ready.
+
+### Step 3 — Install signal-mcp
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). If you don't have it: `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
 ```bash
 git clone https://github.com/googlarz/signal-mcp
@@ -50,17 +65,26 @@ cd signal-mcp
 uv tool install .
 ```
 
-> **PyPI publishing:** The release workflow uses OIDC trusted publisher. To enable it, go to [pypi.org](https://pypi.org) → Your projects → signal-mcp → Publishing → Add a trusted publisher → set **Owner** `googlarz`, **Repository** `signal-mcp`, **Workflow** `publish.yml`, **Environment** `pypi`. After that, every GitHub Release automatically publishes to PyPI.
-
-## Connect to Claude Code
+Verify it works:
 
 ```bash
-# Recommended — one command:
+signal-mcp status
+```
+
+You should see your phone number and daemon status.
+
+### Step 4 — Connect to Claude Code
+
+```bash
 claude mcp add signal -- signal-mcp serve
 ```
 
-Or manually add to `~/.claude.json`:
+Restart Claude Code. Signal tools appear automatically — ask Claude *"check my Signal messages"* to confirm.
 
+<details>
+<summary>Manual config alternatives</summary>
+
+Add to `~/.claude.json` (global):
 ```json
 {
   "mcpServers": {
@@ -72,8 +96,7 @@ Or manually add to `~/.claude.json`:
 }
 ```
 
-Or per-project in `.mcp.json` (point to your clone):
-
+Or per-project in `.mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -84,8 +107,24 @@ Or per-project in `.mcp.json` (point to your clone):
   }
 }
 ```
+</details>
 
-Restart Claude Code. Signal tools will appear automatically.
+### Step 5 — (Optional) Import Signal Desktop history
+
+If you use Signal Desktop on macOS, you can import your full message history in one command:
+
+```bash
+brew install sqlcipher    # required for decryption
+signal-mcp import-desktop # macOS will prompt for Keychain access — click Allow
+```
+
+### Step 6 — (Optional) Enable background message capture
+
+signal-cli only delivers messages when polled. Install the background service to capture everything automatically:
+
+```bash
+signal-mcp install-service   # starts on login, works on macOS and Linux
+```
 
 ## MCP Tools
 
