@@ -311,3 +311,102 @@ def test_edit_group(runner):
         result = runner.invoke(cli, ["edit", "grp123==", "1234567890", "corrected"])
     assert result.exit_code == 0
     client.edit_message.assert_called_once_with(1234567890, "corrected", group_id="grp123==")
+
+
+# ── send-group ────────────────────────────────────────────────────────────────
+
+def test_send_group(runner):
+    from signal_mcp.models import SendResult
+    client = _mock_client()
+    client.send_group_message = AsyncMock(return_value=SendResult(timestamp=555, recipient="grp==", success=True))
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["send-group", "grp==", "hello group"])
+    assert result.exit_code == 0
+    assert "Sent" in result.output
+
+
+def test_send_group_error(runner):
+    from signal_mcp.client import SignalError
+    client = _mock_client()
+    client.send_group_message = AsyncMock(side_effect=SignalError("not a member"))
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["send-group", "grp==", "hi"])
+    assert result.exit_code == 1
+
+
+# ── conversations ─────────────────────────────────────────────────────────────
+
+def test_conversations_table(runner):
+    client = _mock_client()
+    client.list_conversations = AsyncMock(return_value=[
+        {"id": "+11111111111", "type": "direct", "name": "Alice",
+         "unread_count": 3, "last_message": "hey!", "last_message_at": "2024-06-01T12:00:00"},
+        {"id": "grp==", "type": "group", "name": "Team",
+         "unread_count": 0, "last_message": "ok", "last_message_at": "2024-06-01T11:00:00"},
+    ])
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["conversations"])
+    assert result.exit_code == 0
+    assert "Alice" in result.output
+    assert "3 unread" in result.output
+    assert "Team" in result.output
+
+
+def test_conversations_json(runner):
+    client = _mock_client()
+    convs = [{"id": "+1", "type": "direct", "unread_count": 0, "last_message": "hi"}]
+    client.list_conversations = AsyncMock(return_value=convs)
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["conversations", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data[0]["id"] == "+1"
+
+
+def test_conversations_empty(runner):
+    client = _mock_client()
+    client.list_conversations = AsyncMock(return_value=[])
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["conversations"])
+    assert result.exit_code == 0
+    assert "No conversations" in result.output
+
+
+# ── search --sender / --limit ─────────────────────────────────────────────────
+
+def test_search_with_sender(runner):
+    msgs = [_msg(body="filtered")]
+    client = _mock_client()
+    client.search_messages = AsyncMock(return_value=msgs)
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["search", "filtered", "--sender", "+11111111111"])
+    assert result.exit_code == 0
+    assert "filtered" in result.output
+    client.search_messages.assert_called_once_with("filtered", limit=50, sender="+11111111111")
+
+
+def test_search_with_limit(runner):
+    client = _mock_client()
+    client.search_messages = AsyncMock(return_value=[])
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["search", "x", "--limit", "10"])
+    client.search_messages.assert_called_once_with("x", limit=10, sender=None)
+
+
+# ── receive ───────────────────────────────────────────────────────────────────
+
+def test_receive_once(runner):
+    client = _mock_client()
+    client.receive_messages = AsyncMock(return_value=[_msg(body="incoming")])
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["receive"])
+    assert result.exit_code == 0
+    assert "incoming" in result.output
+
+
+def test_receive_empty(runner):
+    client = _mock_client()
+    client.receive_messages = AsyncMock(return_value=[])
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["receive"])
+    assert result.exit_code == 0

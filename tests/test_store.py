@@ -424,3 +424,30 @@ def test_export_messages_empty_store():
     import json
     data = store.export_messages(fmt="json")
     assert json.loads(data) == []
+
+
+# ── count_conversation ────────────────────────────────────────────────────────
+
+def test_count_conversation_direct():
+    store.save_message(make_msg(id="cc1", sender="+1"))
+    store.save_message(make_msg(id="cc2", sender="+1"))
+    assert store.count_conversation("+1") == 2
+
+
+def test_count_conversation_no_match():
+    store.save_message(make_msg(id="cc3", sender="+1"))
+    assert store.count_conversation("+99") == 0
+
+
+def test_count_conversation_since():
+    ts_old = datetime(2024, 1, 1)
+    ts_new = datetime(2024, 6, 1)
+    store.save_message(make_msg(id="cc4", sender="+1", ts=ts_old))
+    store.save_message(make_msg(id="cc5", sender="+1", ts=ts_new))
+    assert store.count_conversation("+1", since=datetime(2024, 3, 1)) == 1
+
+
+def test_count_conversation_group():
+    store.save_message(make_msg(id="cc6", sender="+1", group_id="g1"))
+    store.save_message(make_msg(id="cc7", sender="+2", group_id="g1"))
+    assert store.count_conversation("g1") == 2

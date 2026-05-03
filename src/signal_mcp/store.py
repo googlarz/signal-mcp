@@ -1,5 +1,8 @@
 """Local SQLite message store — persists received messages for history and search."""
 
+import csv
+import io
+import json
 import sqlite3
 import stat
 import threading
@@ -370,10 +373,6 @@ def export_messages(
     since: if given, only messages at or after this datetime.
     fmt: "json" or "csv".
     """
-    import csv
-    import io
-    import json as _json
-
     init_db()
     with _db() as conn:
         params: list = []
@@ -411,7 +410,7 @@ def export_messages(
         return buf.getvalue()
 
     # JSON (default)
-    return _json.dumps(
+    return json.dumps(
         [
             {
                 "id": m.id,

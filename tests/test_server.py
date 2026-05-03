@@ -732,3 +732,116 @@ async def test_tool_export_messages_invalid_format():
 async def test_tool_export_messages_invalid_since():
     result = await call_tool("export_messages", {"since": "not-a-date"})
     assert "Error" in result[0].text
+
+
+# ── set_expiration_timer ──────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_set_expiration_timer_dm():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("set_expiration_timer", {
+        "recipient": "+19999999999", "expiration_seconds": 86400
+    })
+    data = json.loads(result[0].text)
+    assert data["seconds"] == 86400
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_set_expiration_timer_group():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("set_expiration_timer", {
+        "group_id": "grp==", "expiration_seconds": 0
+    })
+    data = json.loads(result[0].text)
+    assert data["seconds"] == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_set_expiration_timer_missing_param():
+    result = await call_tool("set_expiration_timer", {})
+    assert "Error" in result[0].text
+
+
+# ── receive_messages with message data ───────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_receive_messages_with_data():
+    msg_payload = {
+        "envelope": {
+            "source": "+12223334444",
+            "sourceNumber": "+12223334444",
+            "sourceUuid": "uuid-x",
+            "sourceName": "Tester",
+            "sourceDevice": 1,
+            "timestamp": 1700000000000,
+            "dataMessage": {
+                "timestamp": 1700000000000,
+                "message": "live message",
+                "expiresInSeconds": 0,
+                "viewOnce": False,
+            },
+        },
+        "account": "+10000000000",
+    }
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([msg_payload])))
+    result = await call_tool("receive_messages", {"timeout": 1})
+    data = json.loads(result[0].text)
+    assert len(data) == 1
+    assert data[0]["body"] == "live message"
+    assert data[0]["sender"] == "+12223334444"
+
+
+@pytest.mark.asyncio
+async def test_tool_receive_messages_invalid_timeout():
+    result = await call_tool("receive_messages", {"timeout": "bad"})
+    assert "Error" in result[0].text
+
+
+# ── get_unread auto-marks as read ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tool_get_unread_marks_as_read():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="ur1", sender="+12223334444", body="unread msg",
+        timestamp=_dt(2024, 1, 1), is_read=False,
+    ))
+    assert _store_mod.get_unread_messages(own_number="+10000000000") != []
+    result = await call_tool("get_unread", {})
+    data = json.loads(result[0].text)
+    assert len(data) == 1
+    # Now the store should show it as read
+    assert _store_mod.get_unread_messages(own_number="+10000000000") == []
+
+
+# ── get_user_status ───────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_get_user_status():
+    status_result = [{"recipient": "+19999999999", "isRegistered": True}]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(status_result)))
+    result = await call_tool("get_user_status", {"recipients": ["+19999999999"]})
+    data = json.loads(result[0].text)
+    assert data[0]["isRegistered"] is True
+
+
+@pytest.mark.asyncio
+async def test_tool_get_user_status_missing_param():
+    result = await call_tool("get_user_status", {})
+    assert "Error" in result[0].text
+
+
+# ── send_sync_request ─────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_sync_request():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("send_sync_request", {})
+    data = json.loads(result[0].text)
+    assert data["status"] == "sync requested"

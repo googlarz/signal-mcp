@@ -758,6 +758,15 @@ class SignalClient:
     def get_own_number(self) -> str:
         return self.account
 
+    async def get_user_status(self, recipients: list[str]) -> list[dict]:
+        """Check whether phone numbers are registered Signal users."""
+        result = await self._rpc("getUserStatus", {"recipients": recipients})
+        return result if isinstance(result, list) else []
+
+    async def send_sync_request(self) -> None:
+        """Request a sync of messages/contacts/groups from the primary device."""
+        await self._rpc("sendSyncRequest")
+
     # ── Configuration ─────────────────────────────────────────────────────────
 
     async def get_configuration(self) -> dict:

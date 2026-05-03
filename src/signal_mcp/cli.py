@@ -237,12 +237,14 @@ def edit(recipient: str, timestamp: int, message: str):
 
 @cli.command()
 @click.argument("query")
+@click.option("--sender", default=None, help="Restrict to messages from this phone number (E.164)")
+@click.option("--limit", default=50, show_default=True, help="Max results")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query: str, as_json: bool):
+def search(query: str, sender: str | None, limit: int, as_json: bool):
     """Search recent messages for QUERY."""
     async def _run():
         async with SignalClient() as client:
-            messages = await client.search_messages(query)
+            messages = await client.search_messages(query, limit=limit, sender=sender)
             if not messages:
                 click.echo("No messages found.")
                 return
@@ -251,6 +253,35 @@ def search(query: str, as_json: bool):
             else:
                 for msg in messages:
                     _print_message(msg)
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── conversations ─────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def conversations(as_json: bool):
+    """List all conversations ordered by most recent message."""
+    async def _run():
+        async with SignalClient() as client:
+            convs = await client.list_conversations()
+            if not convs:
+                click.echo("No conversations found.")
+                return
+            if as_json:
+                click.echo(json.dumps(convs, indent=2))
+            else:
+                for c in convs:
+                    unread = f" ({c['unread_count']} unread)" if c.get("unread_count") else ""
+                    name = c.get("name") or c["id"]
+                    snippet = c.get("last_message", "")[:60]
+                    click.echo(f"{name:<35} {c['type']:<7}{unread}")
+                    if snippet:
+                        click.echo(f"  {snippet}")
     try:
         run(_run())
     except SignalError as e:

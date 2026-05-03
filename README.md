@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **50 MCP tools** — complete coverage of everything signal-cli exposes
+- **52 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -222,8 +222,10 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 |---|---|
 | `list_conversations` | All conversations ordered by most recent message. |
 | `get_conversation` | Message history with a contact or group. Supports `since`, `limit`, and `offset` for pagination. |
-| `search_messages` | Full-text search (FTS5) across all stored messages. |
+| `search_messages` | Full-text search (FTS5) across all stored messages. Supports `sender` and `limit`. |
 | `store_stats` | Total message count, oldest and newest message dates. |
+| `get_user_status` | Check whether phone numbers are registered Signal users. |
+| `send_sync_request` | Request sync of messages/contacts/groups from your primary device. |
 
 ### Security & Devices
 
@@ -275,6 +277,7 @@ signal-mcp edit <group_id> <timestamp> "corrected text"
 signal-mcp contacts
 signal-mcp contacts --json
 signal-mcp groups
+signal-mcp conversations                   # list all chats with unread count + last message
 
 # History & search
 signal-mcp history +1234567890
@@ -282,6 +285,8 @@ signal-mcp history +1234567890 --limit 20
 signal-mcp history +1234567890 --limit 20 --offset 20   # page 2
 signal-mcp history +1234567890 --since 2024-01-01
 signal-mcp search "keyword"
+signal-mcp search "keyword" --sender +1234567890   # restrict to one contact
+signal-mcp search "keyword" --limit 20
 signal-mcp store-stats
 
 # Export

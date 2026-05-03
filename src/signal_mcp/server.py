@@ -359,6 +359,26 @@ TOOLS = [
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
+        name="get_user_status",
+        description="Check whether one or more phone numbers are registered Signal users",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "recipients": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of phone numbers (E.164) to check",
+                },
+            },
+            "required": ["recipients"],
+        },
+    ),
+    Tool(
+        name="send_sync_request",
+        description="Request a sync of messages, contacts, and groups from your primary Signal device. Useful if history is missing on this linked device.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
         name="delete_message",
         description="Remote-delete (unsend) a message you sent to a contact",
         inputSchema={
@@ -634,6 +654,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "edit_message":         ["target_timestamp", "message"],
             "clear_local_store":    ["confirm"],
             "delete_local_messages":["recipient"],
+            "get_user_status":      ["recipients"],
         }
         if name in _REQUIRED:
             err = _require(arguments, *_REQUIRED[name])
@@ -690,7 +711,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "receive_messages":
             await client._ensure_contact_cache()
-            messages = await client.receive_messages(timeout=arguments.get("timeout", 5))
+            try:
+                timeout = int(arguments.get("timeout", 5))
+            except (TypeError, ValueError):
+                return _err("timeout must be an integer number of seconds")
+            messages = await client.receive_messages(timeout=timeout)
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "list_contacts":
@@ -835,6 +860,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return _err(str(e))
 
         elif name == "list_conversations":
+            await client._ensure_contact_cache()
             return _ok(await client.list_conversations())
 
         elif name == "delete_message":
@@ -918,6 +944,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "delete_local_messages":
             count = await client.delete_local_messages(arguments["recipient"])
             return _ok({"deleted": count, "status": "deleted"})
+
+        elif name == "get_user_status":
+            statuses = await client.get_user_status(arguments["recipients"])
+            return _ok(statuses)
+
+        elif name == "send_sync_request":
+            await client.send_sync_request()
+            return _ok({"status": "sync requested"})
 
         elif name == "export_messages":
             fmt = arguments.get("format", "json")

@@ -999,3 +999,46 @@ async def test_delete_local_messages(client):
     count = await client.delete_local_messages("+19999999999")
     assert count == 1
     assert _store_mod.get_stats()["total_messages"] == 1
+
+
+# ── get_unread auto-marks as read ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_unread_messages_marks_as_read(client):
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="unread1", sender="+12223334444", body="hi",
+        timestamp=_dt(2024, 1, 1), is_read=False,
+    ))
+    msgs = await client.get_unread_messages()
+    assert len(msgs) == 1
+    assert msgs[0].is_read is True
+    # Store should now show zero unread
+    assert _store_mod.get_unread_messages(own_number=client.account) == []
+
+
+@pytest.mark.asyncio
+async def test_get_unread_messages_empty(client):
+    msgs = await client.get_unread_messages()
+    assert msgs == []
+
+
+# ── get_user_status ───────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_user_status(client):
+    status_payload = [{"recipient": "+19999999999", "isRegistered": True}]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(status_payload)))
+    result = await client.get_user_status(["+19999999999"])
+    assert result[0]["isRegistered"] is True
+
+
+# ── send_sync_request ─────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_sync_request(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.send_sync_request()  # should not raise
