@@ -2,6 +2,38 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.4.0] — 2026-05-03
+
+### Performance
+- **Pre-warm daemon at server start** — `signal-mcp serve` now starts signal-cli in the background immediately, eliminating the ~15s cold-start timeout on the first MCP tool call
+- **Watchdog task** — auto-restarts the daemon if it crashes mid-session
+- **Concurrent RPC safety** — `asyncio.Lock` prevents interleaved requests when multiple tools run concurrently (e.g. from Cowork scheduled tasks)
+- **Single-flight daemon startup** — `asyncio.Lock` on `ensure_daemon` prevents concurrent callers from spawning multiple signal-cli processes
+
+### UX
+- **Contact name resolution** — `get_conversation`, `get_unread`, `search_messages`, and `receive_messages` now include `sender_name` / `recipient_name` fields with resolved display names
+- **Auto-mark as read** — `get_conversation` now marks returned received messages as read in the local store (like every Signal client)
+- **signal-cli version check** — server startup fails fast with a helpful message if signal-cli is missing, too old, or not working
+
+### New tools (4)
+- `send_sticker` — send a sticker to a DM contact
+- `send_group_sticker` — send a sticker to a group
+- `list_attachments` — list all locally downloaded attachments (photos, files received via Signal)
+- `get_attachment` — get details about a specific downloaded attachment
+
+### Bug fixes (from Codex review)
+- Contact name cache now retries on RPC failure instead of permanently freezing empty
+- `get_attachment` rejects path traversal filenames (`../secret`)
+- Sticker sends now persist to local store (consistent with all other send paths)
+- `check_signal_cli_version` properly handles timeout and non-zero exit codes
+- Background tasks (watchdog, cache pre-load) are tracked and cancelled on server shutdown
+
+### Stats
+- 42 MCP tools total
+- 161 tests
+
+---
+
 ## [1.3.3] — 2026-05-03
 
 ### Changes

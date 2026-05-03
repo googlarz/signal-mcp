@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **38 MCP tools** — complete coverage of everything signal-cli exposes
+- **42 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -176,6 +176,8 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `react_to_message` | React to a message with an emoji (DM or group). |
 | `set_typing` | Send a typing indicator to a contact. |
 | `send_read_receipt` | Mark messages as read. Also updates local store. |
+| `send_sticker` | Send a sticker to a contact. |
+| `send_group_sticker` | Send a sticker to a group. |
 
 ### Contacts
 
@@ -230,6 +232,8 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | Tool | Description |
 |---|---|
 | `import_desktop` | Import full message history from Signal Desktop (macOS). Requires sqlcipher. |
+| `list_attachments` | List all locally downloaded attachments (photos, files received via Signal). |
+| `get_attachment` | Get details about a specific downloaded attachment by filename. |
 
 ## CLI Usage
 

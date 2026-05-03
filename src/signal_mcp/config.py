@@ -67,24 +67,39 @@ def check_signal_cli_version() -> None:
     try:
         result = subprocess.run(
             ["signal-cli", "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=10,
         )
-        match = re.search(r"(\d+)\.(\d+)\.(\d+)", result.stdout)
-        if not match:
-            raise RuntimeError("Could not parse signal-cli version")
-        version = tuple(int(x) for x in match.groups())
-        if version < MIN_SIGNAL_CLI_VERSION:
-            min_str = ".".join(str(x) for x in MIN_SIGNAL_CLI_VERSION)
-            raise RuntimeError(
-                f"signal-cli {'.'.join(str(x) for x in version)} is too old. "
-                f"Minimum required: {min_str}. "
-                "Upgrade: brew upgrade signal-cli"
-            )
     except FileNotFoundError:
         raise RuntimeError(
             "signal-cli not found. Install it first:\n"
             "  macOS:  brew install signal-cli\n"
             "  Linux:  https://github.com/AsamK/signal-cli/releases"
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "signal-cli --version timed out. "
+            "Ensure signal-cli is installed and working: signal-cli --version"
+        )
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise RuntimeError(
+            f"signal-cli exited with code {result.returncode}"
+            + (f": {stderr}" if stderr else "")
+        )
+
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", result.stdout)
+    if not match:
+        raise RuntimeError(
+            f"Could not parse signal-cli version from: {result.stdout.strip()!r}"
+        )
+    version = tuple(int(x) for x in match.groups())
+    if version < MIN_SIGNAL_CLI_VERSION:
+        min_str = ".".join(str(x) for x in MIN_SIGNAL_CLI_VERSION)
+        raise RuntimeError(
+            f"signal-cli {'.'.join(str(x) for x in version)} is too old. "
+            f"Minimum required: {min_str}. "
+            "Upgrade: brew upgrade signal-cli"
         )
 
 

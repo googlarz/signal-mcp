@@ -772,9 +772,11 @@ async def serve() -> None:
     client = get_client()
     # Pre-warm: start daemon in background so first tool call doesn't cold-start
     await client.prewarm()
-    # Pre-load contact names so responses include display names from the start
-    asyncio.create_task(client._ensure_contact_cache())
+    # Pre-load contact names (best-effort; retries on first use if daemon not ready yet)
+    cache_task = asyncio.create_task(client._ensure_contact_cache())
+    client._background_tasks.append(cache_task)
     # Watchdog: auto-restart daemon if it crashes
-    asyncio.create_task(client.watchdog())
+    watchdog_task = asyncio.create_task(client.watchdog())
+    client._background_tasks.append(watchdog_task)
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())

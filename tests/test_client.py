@@ -684,3 +684,118 @@ async def test_enrich_message_adds_sender_name(client, monkeypatch):
     d = client._enrich_message(msg)
     assert d["sender_name"] == "Carol"
     assert d["body"] == "hi"
+
+
+# ── Codex-flagged gap tests ────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_sticker_saves_to_store(client):
+    """send_sticker persists a record to the local store."""
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 7000})))
+    _store_mod.init_db()
+    await client.send_sticker("+19999999999", "aabb", 2)
+    msgs = _store_mod.get_conversation("+19999999999")
+    assert len(msgs) == 1
+    assert "sticker" in msgs[0].body
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_sticker_saves_to_store(client):
+    """send_group_sticker persists a record to the local store."""
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 8000})))
+    _store_mod.init_db()
+    await client.send_group_sticker("grp1==", "aabb", 0)
+    msgs = _store_mod.get_conversation("grp1==")
+    assert len(msgs) == 1
+    assert "sticker" in msgs[0].body
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_path_traversal_blocked(client, tmp_path, monkeypatch):
+    """get_attachment rejects path traversal attempts."""
+    import signal_mcp.client as _client_mod
+    att_dir = tmp_path / "att"
+    att_dir.mkdir()
+    (tmp_path / "secret.txt").write_text("secret")
+    monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
+    with pytest.raises(SignalError):
+        client.get_attachment("../secret.txt")
+
+
+@pytest.mark.asyncio
+async def test_contact_cache_retries_after_failure(client, monkeypatch):
+    """_ensure_contact_cache retries on RPC failure (cache_loaded stays False)."""
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "_contact_cache_loaded", False)
+    call_count = 0
+
+    async def failing_list_contacts():
+        nonlocal call_count
+        call_count += 1
+        raise Exception("daemon not ready")
+
+    monkeypatch.setattr(client, "list_contacts", failing_list_contacts)
+    await client._ensure_contact_cache()
+    # Cache should NOT be marked loaded on failure — allows retry
+    assert not _client_mod._contact_cache_loaded
+    assert call_count == 1
+    # Second call retries
+    await client._ensure_contact_cache()
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_does_not_mark_own_messages_read(client):
+    """get_conversation auto-mark-as-read skips outgoing messages."""
+    from datetime import datetime
+    _store_mod.init_db()
+    # Outgoing message (sender == own account)
+    _store_mod.save_message(Message(
+        id="sent_out", sender="+10000000000", recipient="+19999999999",
+        body="hi", timestamp=datetime(2024, 6, 1),
+    ))
+    await client.get_conversation("+19999999999")
+    msgs = _store_mod.get_conversation("+19999999999")
+    # Outgoing messages are stored as is_read=1 already; verify they still are
+    outgoing = [m for m in msgs if m.sender == "+10000000000"]
+    assert all(m.is_read for m in outgoing)
+
+
+def test_check_signal_cli_version_timeout(monkeypatch):
+    """check_signal_cli_version raises RuntimeError on timeout."""
+    import subprocess
+    import signal_mcp.config as _config_mod
+
+    def fake_run(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="signal-cli", timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="timed out"):
+        _config_mod.check_signal_cli_version()
+
+
+def test_check_signal_cli_version_nonzero_exit(monkeypatch):
+    """check_signal_cli_version raises RuntimeError on non-zero exit code."""
+    import subprocess
+    import signal_mcp.config as _config_mod
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type(
+        "R", (), {"returncode": 1, "stdout": "", "stderr": "bad"}
+    )())
+    with pytest.raises(RuntimeError, match="exited with code 1"):
+        _config_mod.check_signal_cli_version()
+
+
+def test_check_signal_cli_version_not_found(monkeypatch):
+    """check_signal_cli_version raises RuntimeError when signal-cli missing."""
+    import subprocess
+    import signal_mcp.config as _config_mod
+
+    def fake_run(*a, **kw):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="not found"):
+        _config_mod.check_signal_cli_version()

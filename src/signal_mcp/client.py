@@ -43,6 +43,8 @@ class SignalClient:
         self._daemon_url = daemon_url
         self._http = httpx.AsyncClient(timeout=10.0)
         self._rpc_lock = asyncio.Lock()
+        self._daemon_lock = asyncio.Lock()  # single-flight guard for ensure_daemon
+        self._background_tasks: list[asyncio.Task] = []
 
     @property
     def account(self) -> str:
@@ -51,6 +53,11 @@ class SignalClient:
         return self._account
 
     async def close(self) -> None:
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
         await self._http.aclose()
 
     async def __aenter__(self):
@@ -62,40 +69,46 @@ class SignalClient:
     # ── Daemon management ─────────────────────────────────────────────────────
 
     async def ensure_daemon(self) -> None:
-        """Start signal-cli daemon if not already running."""
+        """Start signal-cli daemon if not already running (single-flight)."""
+        # Fast path without lock
         if await self._daemon_alive():
             return
 
-        stale_pid = read_daemon_pid()
-        if stale_pid:
-            try:
-                os.kill(stale_pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            clear_daemon_pid()
-            await asyncio.sleep(0.5)
-
-        proc = subprocess.Popen(
-            [
-                "signal-cli", "-u", self.account,
-                "daemon",
-                "--http", f"localhost:{DAEMON_PORT}",
-                "--no-receive-stdout",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        save_daemon_pid(proc.pid)
-
-        for _ in range(20):
-            await asyncio.sleep(0.5)
+        async with self._daemon_lock:
+            # Re-check after acquiring lock: another caller may have started it
             if await self._daemon_alive():
                 return
 
-        raise SignalError(
-            "signal-cli daemon failed to start within 10 seconds. "
-            "Try running manually: signal-mcp daemon"
-        )
+            stale_pid = read_daemon_pid()
+            if stale_pid:
+                try:
+                    os.kill(stale_pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                clear_daemon_pid()
+                await asyncio.sleep(0.5)
+
+            proc = subprocess.Popen(
+                [
+                    "signal-cli", "-u", self.account,
+                    "daemon",
+                    "--http", f"localhost:{DAEMON_PORT}",
+                    "--no-receive-stdout",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            save_daemon_pid(proc.pid)
+
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                if await self._daemon_alive():
+                    return
+
+            raise SignalError(
+                "signal-cli daemon failed to start within 10 seconds. "
+                "Try running manually: signal-mcp daemon"
+            )
 
     async def stop_daemon(self) -> bool:
         """Stop the running daemon. Returns True if stopped."""
@@ -134,15 +147,19 @@ class SignalClient:
 
     async def prewarm(self) -> None:
         """Start daemon in background without blocking. Called at server startup."""
-        asyncio.create_task(self.ensure_daemon())
+        task = asyncio.create_task(self.ensure_daemon())
+        self._background_tasks.append(task)
+        task.add_done_callback(lambda t: self._background_tasks.remove(t) if t in self._background_tasks else None)
 
     async def watchdog(self) -> None:
         """Periodically check daemon health and restart if dead. Runs forever."""
         while True:
-            await asyncio.sleep(30)
             try:
+                await asyncio.sleep(30)
                 if not await self._daemon_alive():
                     await self.ensure_daemon()
+            except asyncio.CancelledError:
+                return
             except Exception:
                 pass  # best-effort; never crash the server
 
@@ -279,6 +296,13 @@ class SignalClient:
         }
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        _store.save_message(Message(
+            id=f"sent_{ts}_{recipient}",
+            sender=self.account,
+            recipient=recipient,
+            body=f"[sticker {pack_id}:{sticker_id}]",
+            timestamp=datetime.fromtimestamp(ts / 1000),
+        ))
         return SendResult(timestamp=ts, recipient=recipient, success=True)
 
     async def send_group_sticker(
@@ -291,6 +315,13 @@ class SignalClient:
         }
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        _store.save_message(Message(
+            id=f"sent_{ts}_{group_id}",
+            sender=self.account,
+            body=f"[sticker {pack_id}:{sticker_id}]",
+            timestamp=datetime.fromtimestamp(ts / 1000),
+            group_id=group_id,
+        ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
     def list_attachments(self) -> list[dict]:
@@ -313,8 +344,11 @@ class SignalClient:
     def get_attachment(self, filename: str) -> dict:
         """Get info about a specific downloaded attachment by filename."""
         att_dir = ATTACHMENT_DIR
-        path = att_dir / filename
-        if not path.exists():
+        # Resolve to prevent path traversal (e.g. "../secret")
+        path = (att_dir / filename).resolve()
+        if path.parent != att_dir.resolve():
+            raise SignalError(f"Invalid attachment filename: {filename}")
+        if not path.exists() or not path.is_file():
             raise SignalError(f"Attachment not found: {filename}")
         stat = path.stat()
         return {
@@ -414,7 +448,12 @@ class SignalClient:
     # ── Contact name resolution ───────────────────────────────────────────────
 
     async def _ensure_contact_cache(self) -> None:
-        """Load contacts into module-level cache (runs once per process)."""
+        """Load contacts into module-level cache.
+
+        Only marks the cache as loaded on success — failures allow retry on
+        next call so a cold-start race (daemon not yet up) doesn't permanently
+        freeze the cache empty.
+        """
         global _contact_cache, _contact_cache_loaded
         if _contact_cache_loaded:
             return
@@ -423,9 +462,9 @@ class SignalClient:
             for c in contacts:
                 if c.number:
                     _contact_cache[c.number] = c.display_name
+            _contact_cache_loaded = True  # only set on success
         except Exception:
-            pass
-        _contact_cache_loaded = True
+            pass  # will retry on next call
 
     def resolve_name(self, number: str) -> str:
         """Return display name for a number, or the number itself if unknown."""
