@@ -57,12 +57,18 @@ Once scanned, signal-cli is linked and ready.
 
 ### Step 3 — Install signal-mcp
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). If you don't have it: `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+**With uv** (recommended — `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`):
 
 ```bash
 git clone https://github.com/googlarz/signal-mcp
 cd signal-mcp
 uv tool install .
+```
+
+**With pipx** (no clone needed — `brew install pipx` or `pip install pipx`):
+
+```bash
+pipx install git+https://github.com/googlarz/signal-mcp
 ```
 
 Verify it works:
