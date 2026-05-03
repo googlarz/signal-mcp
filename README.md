@@ -1,7 +1,8 @@
 # signal-mcp
 
 [![Tests](https://github.com/googlarz/signal-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/googlarz/signal-mcp/actions/workflows/test.yml)
-[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
+[![PyPI](https://img.shields.io/pypi/v/signal-mcp)](https://pypi.org/project/Signal-MCP/)
+[![Python](https://img.shields.io/pypi/pyversions/signal-mcp)](https://pypi.org/project/Signal-MCP/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **The most complete Signal MCP server and CLI.** Let Claude send and receive Signal messages, manage contacts and groups, search history, and more — all running 100% locally via [signal-cli](https://github.com/AsamK/signal-cli).
@@ -57,18 +58,26 @@ Once scanned, signal-cli is linked and ready.
 
 ### Step 3 — Install signal-mcp
 
-**With uv** (recommended — `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`):
+**With uv** (recommended):
+
+```bash
+uv tool install signal-mcp
+```
+
+**With pip / pipx:**
+
+```bash
+pip install signal-mcp
+# or
+pipx install signal-mcp
+```
+
+**From source:**
 
 ```bash
 git clone https://github.com/googlarz/signal-mcp
 cd signal-mcp
 uv tool install .
-```
-
-**With pipx** (no clone needed — `brew install pipx` or `pip install pipx`):
-
-```bash
-pipx install git+https://github.com/googlarz/signal-mcp
 ```
 
 Verify it works:

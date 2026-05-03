@@ -2,6 +2,13 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.3.3] — 2026-05-03
+
+### Changes
+- Now available on PyPI: `pip install signal-mcp`
+
+---
+
 ## [1.3.2] — 2026-05-03
 
 ### Bug fixes
