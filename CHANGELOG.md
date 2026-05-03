@@ -2,6 +2,34 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.3.0] — 2026-05-03
+
+### New tools (2)
+- `send_note_to_self` — save a note to yourself (Signal's saved messages)
+- `edit_message` — edit a previously sent message (DM or group)
+
+### New capabilities on existing tools
+- `send_message` / `send_group_message` — quoted replies (`quote_author` + `quote_timestamp`)
+- `send_group_message` — @mention support (`mentions` array)
+- `send_attachment` / `send_group_attachment` — view-once flag (`view_once: true`)
+- `get_conversation` — pagination via `offset` parameter
+- `update_group` — group admin management (`add_admins`, `remove_admins`)
+
+### Reliability
+- JSON-RPC client retries once on `ConnectError` before raising (handles transient daemon restarts)
+
+### Delivery receipts
+- `receive_messages` now surfaces delivery and read receipts as messages with `receipt_type: "DELIVERY"` or `"READ"` — receipts are not stored locally
+
+### PyPI
+- Added GitHub Actions trusted publisher workflow — `pip install signal-mcp` once configured on PyPI
+
+### Stats
+- 38 MCP tools total
+- 131 tests
+
+---
+
 ## [1.2.0] — 2026-05-03
 
 ### New tools (9)

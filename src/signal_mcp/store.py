@@ -109,7 +109,7 @@ def save_message(msg: Message) -> bool:
 
 
 def get_conversation(
-    recipient: str, limit: int = 50, since: datetime | None = None
+    recipient: str, limit: int = 50, offset: int = 0, since: datetime | None = None
 ) -> list[Message]:
     """Get message history with a contact (by number) or group (by group_id)."""
     init_db()
@@ -119,13 +119,13 @@ def get_conversation(
         if since:
             since_clause = "AND timestamp >= ?"
             params.append(int(since.timestamp() * 1000))
-        params.append(limit)
+        params.extend([limit, offset])
         rows = conn.execute(
             f"""SELECT * FROM messages
                WHERE (group_id = ?
                   OR (group_id IS NULL AND (sender = ? OR recipient = ?)))
                {since_clause}
-               ORDER BY timestamp DESC LIMIT ?""",
+               ORDER BY timestamp DESC LIMIT ? OFFSET ?""",
             params,
         ).fetchall()
         return [_row_to_message(conn, r) for r in reversed(rows)]

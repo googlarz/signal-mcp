@@ -47,6 +47,8 @@ TOOLS = [
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format (e.g. +1234567890)"},
                 "message": {"type": "string", "description": "Message text to send"},
+                "quote_author": {"type": "string", "description": "Phone number of the message being quoted/replied to"},
+                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to"},
             },
             "required": ["recipient", "message"],
         },
@@ -59,8 +61,47 @@ TOOLS = [
             "properties": {
                 "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
                 "message": {"type": "string", "description": "Message text to send"},
+                "mentions": {
+                    "type": "array",
+                    "description": "List of @mentions: each item is {start, length, author} where author is a phone number",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "author": {"type": "string"},
+                        },
+                    },
+                },
+                "quote_author": {"type": "string", "description": "Phone number of the message being quoted/replied to"},
+                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to"},
             },
             "required": ["group_id", "message"],
+        },
+    ),
+    Tool(
+        name="send_note_to_self",
+        description="Send a note to yourself (saved messages / note to self)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Note text to save"},
+            },
+            "required": ["message"],
+        },
+    ),
+    Tool(
+        name="edit_message",
+        description="Edit a previously sent message",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to edit"},
+                "message": {"type": "string", "description": "New message text"},
+                "recipient": {"type": "string", "description": "Phone number for a DM message"},
+                "group_id": {"type": "string", "description": "Group ID for a group message"},
+            },
+            "required": ["target_timestamp", "message"],
         },
     ),
     Tool(
@@ -91,6 +132,7 @@ TOOLS = [
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number or group ID"},
                 "limit": {"type": "integer", "description": "Max messages to return (default: 50)", "default": 50},
+                "offset": {"type": "integer", "description": "Number of messages to skip for pagination (default: 0)", "default": 0},
                 "since": {"type": "string", "description": "Only messages after this ISO datetime (e.g. 2024-01-01T00:00:00)"},
             },
             "required": ["recipient"],
@@ -116,6 +158,7 @@ TOOLS = [
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
                 "path": {"type": "string", "description": "File path (absolute, relative, or ~/path)"},
                 "caption": {"type": "string", "description": "Optional caption text", "default": ""},
+                "view_once": {"type": "boolean", "description": "Send as view-once (disappears after viewing)", "default": False},
             },
             "required": ["recipient", "path"],
         },
@@ -129,6 +172,7 @@ TOOLS = [
                 "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
                 "path": {"type": "string", "description": "File path (absolute, relative, or ~/path)"},
                 "caption": {"type": "string", "description": "Optional caption text", "default": ""},
+                "view_once": {"type": "boolean", "description": "Send as view-once (disappears after viewing)", "default": False},
             },
             "required": ["group_id", "path"],
         },
@@ -348,7 +392,7 @@ TOOLS = [
     ),
     Tool(
         name="update_group",
-        description="Update a group's name, description, members, or expiration timer",
+        description="Update a group's name, description, members, admins, or expiration timer",
         inputSchema={
             "type": "object",
             "properties": {
@@ -357,6 +401,8 @@ TOOLS = [
                 "description": {"type": "string", "description": "New group description"},
                 "add_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to add"},
                 "remove_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to remove"},
+                "add_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to promote to admin"},
+                "remove_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to demote from admin"},
                 "expiration_seconds": {"type": "integer", "description": "Disappearing message timer in seconds (0 to disable)"},
             },
             "required": ["group_id"],
@@ -425,12 +471,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             await client.ensure_daemon()
 
         if name == "send_message":
-            result = await client.send_message(arguments["recipient"], arguments["message"])
+            result = await client.send_message(
+                arguments["recipient"], arguments["message"],
+                quote_author=arguments.get("quote_author"),
+                quote_timestamp=arguments.get("quote_timestamp"),
+            )
             return _ok({"status": "sent", "timestamp": result.timestamp, "recipient": result.recipient})
 
         elif name == "send_group_message":
-            result = await client.send_group_message(arguments["group_id"], arguments["message"])
+            result = await client.send_group_message(
+                arguments["group_id"], arguments["message"],
+                mentions=arguments.get("mentions"),
+                quote_author=arguments.get("quote_author"),
+                quote_timestamp=arguments.get("quote_timestamp"),
+            )
             return _ok({"status": "sent", "timestamp": result.timestamp, "group_id": result.recipient})
+
+        elif name == "send_note_to_self":
+            result = await client.send_note_to_self(arguments["message"])
+            return _ok({"status": "sent", "timestamp": result.timestamp})
+
+        elif name == "edit_message":
+            await client.edit_message(
+                target_timestamp=arguments["target_timestamp"],
+                message=arguments["message"],
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+            )
+            return _ok({"status": "message edited", "target_timestamp": arguments["target_timestamp"]})
 
         elif name == "receive_messages":
             messages = await client.receive_messages(timeout=arguments.get("timeout", 5))
@@ -454,6 +522,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             messages = await client.get_conversation(
                 arguments["recipient"],
                 limit=arguments.get("limit", 50),
+                offset=arguments.get("offset", 0),
                 since=since,
             )
             return _ok([m.to_dict() for m in messages])
@@ -467,6 +536,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 arguments["recipient"],
                 arguments["path"],
                 caption=arguments.get("caption", ""),
+                view_once=arguments.get("view_once", False),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp})
 
@@ -475,6 +545,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 arguments["group_id"],
                 arguments["path"],
                 caption=arguments.get("caption", ""),
+                view_once=arguments.get("view_once", False),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp})
 
@@ -586,6 +657,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 add_members=arguments.get("add_members"),
                 remove_members=arguments.get("remove_members"),
                 expiration_seconds=arguments.get("expiration_seconds"),
+                add_admins=arguments.get("add_admins"),
+                remove_admins=arguments.get("remove_admins"),
             )
             return _ok({"status": "group updated", "group_id": arguments["group_id"]})
 

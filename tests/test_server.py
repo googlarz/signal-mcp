@@ -288,3 +288,133 @@ async def test_tool_update_group():
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     result = await call_tool("update_group", {"group_id": "grp1==", "name": "New Name"})
     assert "group updated" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_get_profile():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([
+        {"number": "+19999999999", "uuid": "uuid-1", "profile": {"givenName": "Alice", "familyName": "Smith"}}
+    ])))
+    result = await call_tool("get_profile", {"number": "+19999999999"})
+    assert "+19999999999" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_note_to_self():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 999})))
+    result = await call_tool("send_note_to_self", {"message": "Remember to buy milk"})
+    assert "sent" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_edit_message_dm():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("edit_message", {
+        "target_timestamp": 1700000000000,
+        "message": "corrected text",
+        "recipient": "+19999999999",
+    })
+    assert "edited" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_edit_message_group():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("edit_message", {
+        "target_timestamp": 1700000000000,
+        "message": "corrected",
+        "group_id": "grp1==",
+    })
+    assert "edited" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_message_with_quote():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    result = await call_tool("send_message", {
+        "recipient": "+19999999999",
+        "message": "Replying!",
+        "quote_author": "+11111111111",
+        "quote_timestamp": 1700000000000,
+    })
+    assert "sent" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_group_message_with_mentions():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 2})))
+    result = await call_tool("send_group_message", {
+        "group_id": "grp1==",
+        "message": "Hey +19999999999!",
+        "mentions": [{"start": 4, "length": 12, "author": "+19999999999"}],
+    })
+    assert "sent" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_attachment_view_once():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 3})))
+    result = await call_tool("send_attachment", {
+        "recipient": "+19999999999",
+        "path": "/tmp/photo.jpg",
+        "view_once": True,
+    })
+    assert "sent" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_update_group_admin_management():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("update_group", {
+        "group_id": "grp1==",
+        "add_admins": ["+19999999999"],
+        "remove_admins": ["+11111111111"],
+    })
+    assert "group updated" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_receive_delivery_receipt():
+    envelopes = [
+        {
+            "envelope": {
+                "source": "+13333333333",
+                "timestamp": 1700000000000,
+                "receiptMessage": {"type": "DELIVERY", "timestamps": [1699999999000]},
+            }
+        }
+    ]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(envelopes)))
+    result = await call_tool("receive_messages", {"timeout": 1})
+    data = json.loads(result[0].text)
+    assert len(data) == 1
+    assert data[0]["receipt_type"] == "DELIVERY"
+
+
+@pytest.mark.asyncio
+async def test_tool_get_conversation_pagination():
+    from signal_mcp.models import Message
+    from datetime import datetime
+    for i in range(5):
+        _store_mod.save_message(Message(
+            id=f"msg{i}", sender="+2", body=f"msg {i}",
+            timestamp=datetime(2024, 1, 1, 0, 0, i),
+        ))
+    result_all = await call_tool("get_conversation", {"recipient": "+2", "limit": 5})
+    result_page = await call_tool("get_conversation", {"recipient": "+2", "limit": 3, "offset": 0})
+    result_next = await call_tool("get_conversation", {"recipient": "+2", "limit": 3, "offset": 3})
+    all_msgs = json.loads(result_all[0].text)
+    page1 = json.loads(result_page[0].text)
+    page2 = json.loads(result_next[0].text)
+    assert len(all_msgs) == 5
+    assert len(page1) == 3
+    assert len(page2) == 2

@@ -421,3 +421,148 @@ async def test_set_expiration_timer_group(client):
     params = json.loads(route.calls[0].request.read())["params"]
     assert params["groupId"] == "grp1=="
     assert params["expiration"] == 3600
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_message_with_quote_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    await client.send_message("+19999999999", "reply!", quote_author="+11111111111", quote_timestamp=1700000000000)
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["quoteAuthor"] == "+11111111111"
+    assert params["quoteTimestamp"] == 1700000000000
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_message_with_mentions_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 2})))
+    mentions = [{"start": 0, "length": 12, "author": "+19999999999"}]
+    await client.send_group_message("grp1==", "hello!", mentions=mentions)
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["mention"] == mentions
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_attachment_view_once_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 3})))
+    await client.send_attachment("+19999999999", "/tmp/photo.jpg", view_once=True)
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["viewOnce"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_group_admin_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_group("grp1==", add_admins=["+1111"], remove_admins=["+2222"])
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["admin"] == ["+1111"]
+    assert params["removeAdmin"] == ["+2222"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_edit_message_dm_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.edit_message(1700000000000, "new text", recipient="+19999999999")
+    import json
+    body = json.loads(route.calls[0].request.read())
+    assert body["method"] == "editMessage"
+    params = body["params"]
+    assert params["targetTimestamp"] == 1700000000000
+    assert params["message"] == "new text"
+    assert params["recipient"] == ["+19999999999"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_edit_message_group_rpc_params(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.edit_message(1700000000000, "fixed", group_id="grp1==")
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["groupId"] == "grp1=="
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_edit_message_requires_target(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    with pytest.raises(SignalError):
+        await client.edit_message(1700000000000, "oops")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_note_to_self(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 99})))
+    result = await client.send_note_to_self("reminder")
+    import json
+    params = json.loads(route.calls[0].request.read())["params"]
+    assert params["recipient"] == ["+10000000000"]  # own account
+    assert result.success is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_receive_delivery_receipt_not_saved_to_store(client):
+    envelopes = [
+        {
+            "envelope": {
+                "source": "+13333333333",
+                "timestamp": 1700000000000,
+                "receiptMessage": {"type": "DELIVERY", "timestamps": [1699999999000]},
+            }
+        }
+    ]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(envelopes)))
+    messages = await client.receive_messages(timeout=1)
+    assert len(messages) == 1
+    assert messages[0].receipt_type == "DELIVERY"
+    # Receipt must not be stored
+    stored = _store_mod.get_conversation("+13333333333")
+    assert stored == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_receive_message_parses_quote(client):
+    envelopes = [
+        {
+            "envelope": {
+                "source": "+13333333333",
+                "dataMessage": {
+                    "timestamp": 1700000000001,
+                    "message": "replying",
+                    "attachments": [],
+                    "quote": {"id": 1700000000000, "author": "+19999999999", "text": "original"},
+                },
+            }
+        }
+    ]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(envelopes)))
+    messages = await client.receive_messages(timeout=1)
+    assert messages[0].quote_id == "1700000000000"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_rpc_retries_on_connect_error(client):
+    """_rpc retries once on ConnectError before giving up."""
+    call_count = 0
+
+    def side_effect(request):
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectError("refused")
+
+    respx.post(DAEMON_URL).mock(side_effect=side_effect)
+    with pytest.raises(SignalError, match="daemon not running"):
+        await client.send_message("+19999999999", "hi")
+    assert call_count == 2  # initial + 1 retry

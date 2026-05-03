@@ -19,7 +19,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **36 MCP tools** — full coverage of everything signal-cli supports
+- **38 MCP tools** — full coverage of everything signal-cli supports
 - **Complete conversation history** — both sent and received messages stored locally
 - **Full-text search** — FTS5 SQLite index across all messages
 - **Signal Desktop import** — pull your entire message history in one command
@@ -124,6 +124,8 @@ Restart Claude Code. Signal tools will appear automatically.
 | `get_own_number` | Get your own Signal phone number |
 | `store_stats` | Stored message count and date range |
 | `import_desktop` | Import full history from Signal Desktop |
+| `send_note_to_self` | Save a note to yourself (saved messages) |
+| `edit_message` | Edit a previously sent message |
 
 ## CLI Usage
 

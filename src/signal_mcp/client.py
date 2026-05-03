@@ -137,10 +137,15 @@ class SignalClient:
         if params:
             payload["params"] = params
 
-        try:
-            r = await self._http.post(self._daemon_url, json=payload)
-            r.raise_for_status()
-        except httpx.ConnectError:
+        for attempt in range(2):
+            try:
+                r = await self._http.post(self._daemon_url, json=payload)
+                r.raise_for_status()
+                break
+            except httpx.ConnectError:
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+        else:
             raise SignalError("signal-cli daemon not running. Run: signal-mcp daemon")
 
         body = r.json()
@@ -150,11 +155,18 @@ class SignalClient:
 
     # ── Messaging ─────────────────────────────────────────────────────────────
 
-    async def send_message(self, recipient: str, message: str) -> SendResult:
-        result = await self._rpc("send", {
-            "recipient": [recipient],
-            "message": message,
-        })
+    async def send_message(
+        self,
+        recipient: str,
+        message: str,
+        quote_author: str | None = None,
+        quote_timestamp: int | None = None,
+    ) -> SendResult:
+        params: dict = {"recipient": [recipient], "message": message}
+        if quote_author and quote_timestamp:
+            params["quoteAuthor"] = quote_author
+            params["quoteTimestamp"] = quote_timestamp
+        result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         _store.save_message(Message(
             id=f"sent_{ts}_{recipient}",
@@ -162,14 +174,25 @@ class SignalClient:
             recipient=recipient,
             body=message,
             timestamp=datetime.fromtimestamp(ts / 1000),
+            quote_id=str(quote_timestamp) if quote_timestamp else None,
         ))
         return SendResult(timestamp=ts, recipient=recipient, success=True)
 
-    async def send_group_message(self, group_id: str, message: str) -> SendResult:
-        result = await self._rpc("send", {
-            "groupId": group_id,
-            "message": message,
-        })
+    async def send_group_message(
+        self,
+        group_id: str,
+        message: str,
+        mentions: list[dict] | None = None,
+        quote_author: str | None = None,
+        quote_timestamp: int | None = None,
+    ) -> SendResult:
+        params: dict = {"groupId": group_id, "message": message}
+        if mentions:
+            params["mention"] = mentions
+        if quote_author and quote_timestamp:
+            params["quoteAuthor"] = quote_author
+            params["quoteTimestamp"] = quote_timestamp
+        result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         _store.save_message(Message(
             id=f"sent_{ts}_{group_id}",
@@ -177,14 +200,23 @@ class SignalClient:
             body=message,
             timestamp=datetime.fromtimestamp(ts / 1000),
             group_id=group_id,
+            quote_id=str(quote_timestamp) if quote_timestamp else None,
         ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
-    async def send_attachment(self, recipient: str, path: str, caption: str = "") -> SendResult:
+    async def send_note_to_self(self, message: str) -> SendResult:
+        """Send a note to yourself (saved messages)."""
+        return await self.send_message(self.account, message)
+
+    async def send_attachment(
+        self, recipient: str, path: str, caption: str = "", view_once: bool = False
+    ) -> SendResult:
         resolved = str(Path(path).expanduser().resolve())
         params: dict = {"recipient": [recipient], "attachment": [resolved]}
         if caption:
             params["message"] = caption
+        if view_once:
+            params["viewOnce"] = True
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         _store.save_message(Message(
@@ -196,11 +228,15 @@ class SignalClient:
         ))
         return SendResult(timestamp=ts, recipient=recipient, success=True)
 
-    async def send_group_attachment(self, group_id: str, path: str, caption: str = "") -> SendResult:
+    async def send_group_attachment(
+        self, group_id: str, path: str, caption: str = "", view_once: bool = False
+    ) -> SendResult:
         resolved = str(Path(path).expanduser().resolve())
         params: dict = {"groupId": group_id, "attachment": [resolved]}
         if caption:
             params["message"] = caption
+        if view_once:
+            params["viewOnce"] = True
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
@@ -237,12 +273,28 @@ class SignalClient:
         for envelope in result if isinstance(result, list) else []:
             msg = self._parse_envelope(envelope)
             if msg:
-                _store.save_message(msg)
+                if not msg.receipt_type:
+                    _store.save_message(msg)
                 messages.append(msg)
         return messages
 
     def _parse_envelope(self, envelope: dict) -> Message | None:
         data = envelope.get("envelope", envelope)
+        sender = data.get("source", "") or data.get("sourceNumber", "")
+        ts_ms = data.get("timestamp", 0)
+
+        # Delivery/read receipts
+        receipt = data.get("receiptMessage")
+        if receipt:
+            receipt_type = receipt.get("type", "DELIVERY")
+            return Message(
+                id=f"receipt_{ts_ms}_{sender}",
+                sender=sender,
+                body="",
+                timestamp=datetime.fromtimestamp(ts_ms / 1000),
+                receipt_type=receipt_type,
+            )
+
         data_message = data.get("dataMessage")
         if not data_message:
             return None
@@ -264,14 +316,16 @@ class SignalClient:
                 size=att.get("size"),
             ))
 
-        ts_ms = data_message.get("timestamp", 0)
+        ts_ms = data_message.get("timestamp", ts_ms)
+        quote = data_message.get("quote") or {}
         return Message(
             id=str(ts_ms),
-            sender=data.get("source", "") or data.get("sourceNumber", ""),
+            sender=sender,
             body=data_message.get("message", "") or "",
             timestamp=datetime.fromtimestamp(ts_ms / 1000),
             attachments=attachments,
             group_id=data_message.get("groupInfo", {}).get("groupId"),
+            quote_id=str(quote["id"]) if quote.get("id") else None,
         )
 
     # ── Contacts ──────────────────────────────────────────────────────────────
@@ -384,8 +438,10 @@ class SignalClient:
         add_members: list[str] | None = None,
         remove_members: list[str] | None = None,
         expiration_seconds: int | None = None,
+        add_admins: list[str] | None = None,
+        remove_admins: list[str] | None = None,
     ) -> None:
-        """Update group properties (name, description, members, expiry timer)."""
+        """Update group properties (name, description, members, admins, expiry timer)."""
         params: dict = {"groupId": group_id}
         if name is not None:
             params["name"] = name
@@ -397,6 +453,10 @@ class SignalClient:
             params["removeMember"] = remove_members
         if expiration_seconds is not None:
             params["expiration"] = expiration_seconds
+        if add_admins:
+            params["admin"] = add_admins
+        if remove_admins:
+            params["removeAdmin"] = remove_admins
         await self._rpc("updateGroup", params)
 
     async def join_group(self, uri: str) -> dict:
@@ -420,9 +480,9 @@ class SignalClient:
     # ── History & Search ──────────────────────────────────────────────────────
 
     async def get_conversation(
-        self, recipient: str, limit: int = 50, since: datetime | None = None
+        self, recipient: str, limit: int = 50, offset: int = 0, since: datetime | None = None
     ) -> list[Message]:
-        return _store.get_conversation(recipient, limit=limit, since=since)
+        return _store.get_conversation(recipient, limit=limit, offset=offset, since=since)
 
     async def search_messages(self, query: str, limit: int = 50) -> list[Message]:
         return _store.search_messages(query, limit=limit)
@@ -449,6 +509,23 @@ class SignalClient:
             "groupId": group_id,
             "targetTimestamp": target_timestamp,
         })
+
+    async def edit_message(
+        self,
+        target_timestamp: int,
+        message: str,
+        recipient: str | None = None,
+        group_id: str | None = None,
+    ) -> None:
+        """Edit a previously sent message."""
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {"targetTimestamp": target_timestamp, "message": message}
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        await self._rpc("editMessage", params)
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
         await self._rpc("sendReadReceipt", {

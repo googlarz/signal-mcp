@@ -24,6 +24,7 @@ class Message:
     quote_id: str | None = None
     reactions: dict[str, str] = field(default_factory=dict)  # emoji -> sender
     is_read: bool = False
+    receipt_type: str | None = None  # "DELIVERY" or "READ" for receipt envelopes
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +46,7 @@ class Message:
             "quote_id": self.quote_id,
             "reactions": self.reactions,
             "is_read": self.is_read,
+            "receipt_type": self.receipt_type,
         }
 
 
