@@ -2,6 +2,27 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.7.0] — 2026-05-03
+
+### New tools (2 → 50 total)
+
+- `export_messages` — export stored messages as JSON or CSV; optionally filter by conversation or date
+- `search_messages` gains `sender` parameter — restrict full-text search results to one phone number
+
+### Reliability
+
+- **Daemon auto-restart** — on `ConnectError` during an RPC call, signal-mcp now calls `ensure_daemon()` before retrying instead of sleeping; recovers from crashed daemons without user intervention
+
+### CLI
+
+- `signal-mcp export [OUTPUT]` — export all (or filtered) stored messages to a file or stdout; supports `--format json|csv`, `--recipient`, `--since`
+
+### Stats
+- 50 MCP tools total
+- 201 tests
+
+---
+
 ## [1.6.0] — 2026-05-03
 
 ### Security

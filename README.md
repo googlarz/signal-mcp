@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **48 MCP tools** — complete coverage of everything signal-cli exposes
+- **50 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -250,6 +250,7 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `get_attachment` | Get details about a specific downloaded attachment by filename. |
 | `clear_local_store` | Delete ALL locally stored messages (requires `confirm: true`). Does not unsend from Signal. |
 | `delete_local_messages` | Delete locally stored messages for one contact or group. |
+| `export_messages` | Export stored messages as JSON or CSV. Supports `recipient` and `since` filters. |
 
 ## CLI Usage
 
@@ -282,6 +283,13 @@ signal-mcp history +1234567890 --limit 20 --offset 20   # page 2
 signal-mcp history +1234567890 --since 2024-01-01
 signal-mcp search "keyword"
 signal-mcp store-stats
+
+# Export
+signal-mcp export                                          # all messages as JSON to stdout
+signal-mcp export messages.json                            # save to file
+signal-mcp export messages.csv --format csv                # CSV format
+signal-mcp export --recipient +1234567890 --format csv     # one conversation
+signal-mcp export --since 2024-01-01                       # messages from date
 
 # Signal Desktop import (macOS)
 signal-mcp import-desktop

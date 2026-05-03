@@ -680,3 +680,55 @@ async def test_tool_send_message_invalid_number():
     result = await call_tool("send_message", {"recipient": "notanumber", "message": "hi"})
     assert "Error" in result[0].text
     assert "E.164" in result[0].text
+
+
+# ── search_messages with sender filter ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tool_search_messages_sender_filter():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="s1", sender="+11111111111", body="hello from 1", timestamp=_dt(2024, 1, 1)))
+    _store_mod.save_message(Message(id="s2", sender="+12222222222", body="hello from 2", timestamp=_dt(2024, 1, 2)))
+    result = await call_tool("search_messages", {"query": "hello", "sender": "+11111111111"})
+    data = json.loads(result[0].text)
+    assert len(data) == 1
+    assert data[0]["sender"] == "+11111111111"
+
+
+# ── export_messages tool ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tool_export_messages_json():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="e1", sender="+11111111111", body="exportable", timestamp=_dt(2024, 1, 1)))
+    result = await call_tool("export_messages", {"format": "json"})
+    data = json.loads(result[0].text)
+    assert data["format"] == "json"
+    payload = json.loads(data["data"])
+    assert len(payload) == 1
+    assert payload[0]["body"] == "exportable"
+
+
+@pytest.mark.asyncio
+async def test_tool_export_messages_csv():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="e2", sender="+11111111111", body="csv row", timestamp=_dt(2024, 1, 1)))
+    result = await call_tool("export_messages", {"format": "csv"})
+    data = json.loads(result[0].text)
+    assert data["format"] == "csv"
+    assert "csv row" in data["data"]
+
+
+@pytest.mark.asyncio
+async def test_tool_export_messages_invalid_format():
+    result = await call_tool("export_messages", {"format": "xml"})
+    assert "Error" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_tool_export_messages_invalid_since():
+    result = await call_tool("export_messages", {"since": "not-a-date"})
+    assert "Error" in result[0].text

@@ -331,3 +331,73 @@ def test_update_message_body_syncs_fts():
     assert results[0].body == "findme edited"
     results_old = store.search_messages("original")
     assert results_old == []
+
+
+# ── search_messages sender filter ────────────────────────────────────────────
+
+def test_search_messages_sender_filter():
+    store.save_message(make_msg(id="sf1", sender="+1", body="hello from one"))
+    store.save_message(make_msg(id="sf2", sender="+2", body="hello from two"))
+    results = store.search_messages("hello", sender="+1")
+    assert len(results) == 1
+    assert results[0].sender == "+1"
+
+
+def test_search_messages_sender_filter_no_match():
+    store.save_message(make_msg(id="sf3", sender="+1", body="hello"))
+    results = store.search_messages("hello", sender="+9")
+    assert results == []
+
+
+def test_search_messages_sender_none_returns_all():
+    store.save_message(make_msg(id="sf4", sender="+1", body="hello"))
+    store.save_message(make_msg(id="sf5", sender="+2", body="hello"))
+    results = store.search_messages("hello")
+    assert len(results) == 2
+
+
+# ── export_messages ───────────────────────────────────────────────────────────
+
+def test_export_messages_json_all():
+    import json
+    store.save_message(make_msg(id="ex1", sender="+1", body="exported"))
+    data = store.export_messages(fmt="json")
+    parsed = json.loads(data)
+    assert len(parsed) == 1
+    assert parsed[0]["body"] == "exported"
+    assert parsed[0]["sender"] == "+1"
+
+
+def test_export_messages_csv_all():
+    store.save_message(make_msg(id="ex2", sender="+1", body="csv export"))
+    data = store.export_messages(fmt="csv")
+    assert "csv export" in data
+    assert "id,timestamp,sender" in data
+
+
+def test_export_messages_filter_recipient():
+    import json
+    store.save_message(make_msg(id="ex3", sender="+1", body="msg from 1"))
+    store.save_message(make_msg(id="ex4", sender="+2", body="msg from 2"))
+    data = store.export_messages(fmt="json", recipient="+1")
+    parsed = json.loads(data)
+    assert len(parsed) == 1
+    assert parsed[0]["sender"] == "+1"
+
+
+def test_export_messages_filter_since():
+    import json
+    ts_early = datetime(2024, 1, 1, 0, 0, 0)
+    ts_late = datetime(2024, 6, 1, 0, 0, 0)
+    store.save_message(make_msg(id="ex5", sender="+1", body="early", ts=ts_early))
+    store.save_message(make_msg(id="ex6", sender="+1", body="late", ts=ts_late))
+    data = store.export_messages(fmt="json", since=datetime(2024, 3, 1))
+    parsed = json.loads(data)
+    assert len(parsed) == 1
+    assert parsed[0]["body"] == "late"
+
+
+def test_export_messages_empty_store():
+    import json
+    data = store.export_messages(fmt="json")
+    assert json.loads(data) == []

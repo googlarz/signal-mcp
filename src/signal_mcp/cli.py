@@ -349,6 +349,31 @@ def import_desktop():
         sys.exit(1)
 
 
+# ── export ────────────────────────────────────────────────────────────────────
+
+@cli.command("export")
+@click.argument("output", type=click.Path(), default="-")
+@click.option("--format", "fmt", type=click.Choice(["json", "csv"]), default="json", show_default=True, help="Output format")
+@click.option("--recipient", default=None, help="Export only this conversation (phone number or group ID)")
+@click.option("--since", default=None, help="Only messages at or after this ISO datetime (e.g. 2024-01-01)")
+def export_cmd(output: str, fmt: str, recipient: str | None, since: str | None):
+    """Export stored messages to a file (or stdout with OUTPUT=-)."""
+    from datetime import datetime as _dt
+    since_dt = None
+    if since:
+        try:
+            since_dt = _dt.fromisoformat(since)
+        except ValueError:
+            click.echo(f"Error: invalid --since date: {since!r}", err=True)
+            sys.exit(1)
+    data = _store.export_messages(fmt=fmt, recipient=recipient, since=since_dt)
+    if output == "-":
+        click.echo(data, nl=False)
+    else:
+        Path(output).write_text(data)
+        click.echo(f"Exported to {output}")
+
+
 # ── install-service ───────────────────────────────────────────────────────────
 
 PLIST_LABEL = "com.signal-mcp.watch"

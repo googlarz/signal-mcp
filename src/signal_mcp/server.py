@@ -21,7 +21,7 @@ _DAEMON_FREE = {
     "import_desktop", "store_stats", "list_conversations",
     "get_conversation", "search_messages", "get_unread", "get_own_number",
     "list_attachments", "get_attachment",
-    "clear_local_store", "delete_local_messages",
+    "clear_local_store", "delete_local_messages", "export_messages",
 }
 # Note: get_configuration, update_configuration, list_sticker_packs, add_sticker_pack
 # all require the daemon (they call signal-cli JSON-RPC)
@@ -159,6 +159,8 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Keyword or phrase to search for"},
+                "sender": {"type": "string", "description": "Filter results to messages from this phone number (E.164)"},
+                "limit": {"type": "integer", "description": "Maximum results to return (default 50)"},
             },
             "required": ["query"],
         },
@@ -495,6 +497,18 @@ TOOLS += [
         },
     ),
     Tool(
+        name="export_messages",
+        description="Export stored messages as JSON or CSV text. Optionally filter by conversation or date.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["json", "csv"], "description": "Output format (default: json)"},
+                "recipient": {"type": "string", "description": "Export only this conversation (phone number or group ID)"},
+                "since": {"type": "string", "description": "Only include messages at or after this ISO datetime"},
+            },
+        },
+    ),
+    Tool(
         name="get_configuration",
         description="Get current Signal account configuration (read receipts, typing indicators, link previews)",
         inputSchema={"type": "object", "properties": {}},
@@ -713,7 +727,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "search_messages":
             await client._ensure_contact_cache()
-            messages = await client.search_messages(arguments["query"])
+            messages = await client.search_messages(
+                arguments["query"],
+                limit=int(arguments.get("limit", 50)),
+                sender=arguments.get("sender"),
+            )
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "send_attachment":
@@ -900,6 +918,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "delete_local_messages":
             count = await client.delete_local_messages(arguments["recipient"])
             return _ok({"deleted": count, "status": "deleted"})
+
+        elif name == "export_messages":
+            fmt = arguments.get("format", "json")
+            if fmt not in ("json", "csv"):
+                return _err("format must be 'json' or 'csv'")
+            since_str = arguments.get("since")
+            since = None
+            if since_str:
+                try:
+                    since = datetime.fromisoformat(since_str)
+                except ValueError:
+                    return _err(f"Invalid since datetime: {since_str!r}")
+            data = await client.export_messages(
+                fmt=fmt,
+                recipient=arguments.get("recipient"),
+                since=since,
+            )
+            return _ok({"format": fmt, "data": data})
 
         else:
             return _err(f"Unknown tool: {name}")

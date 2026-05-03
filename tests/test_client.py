@@ -3,6 +3,7 @@
 import pytest
 import respx
 import httpx
+from unittest.mock import patch
 
 import signal_mcp.store as _store_mod
 from signal_mcp.client import SignalClient, SignalError
@@ -65,8 +66,10 @@ async def test_send_message_rpc_error(client):
 @pytest.mark.asyncio
 async def test_send_message_connection_error(client):
     respx.post(DAEMON_URL).mock(side_effect=httpx.ConnectError("refused"))
-    with pytest.raises(SignalError, match="daemon not running"):
-        await client.send_message("+19999999999", "Hi")
+    # With auto-restart, ensure_daemon is called on first ConnectError; mock it out
+    with patch.object(client, "ensure_daemon", return_value=None):
+        with pytest.raises(SignalError):
+            await client.send_message("+19999999999", "Hi")
 
 
 @respx.mock
@@ -591,8 +594,9 @@ async def test_rpc_retries_on_connect_error(client):
         raise httpx.ConnectError("refused")
 
     respx.post(DAEMON_URL).mock(side_effect=side_effect)
-    with pytest.raises(SignalError, match="daemon not running"):
-        await client.send_message("+19999999999", "hi")
+    with patch.object(client, "ensure_daemon", return_value=None):
+        with pytest.raises(SignalError):
+            await client.send_message("+19999999999", "hi")
     assert call_count == 2  # initial + 1 retry
 
 

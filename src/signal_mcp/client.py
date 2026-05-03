@@ -243,7 +243,8 @@ class SignalClient:
                     break
                 except httpx.ConnectError:
                     if attempt == 0:
-                        await asyncio.sleep(0.5)
+                        # Daemon may have crashed — try to restart before the second attempt
+                        await self.ensure_daemon()
             else:
                 raise SignalError("signal-cli daemon not running. Run: signal-mcp daemon")
 
@@ -718,8 +719,8 @@ class SignalClient:
                     m.is_read = True
         return messages
 
-    async def search_messages(self, query: str, limit: int = 50) -> list[Message]:
-        return await asyncio.to_thread(_store.search_messages, query, limit=limit)
+    async def search_messages(self, query: str, limit: int = 50, sender: str | None = None) -> list[Message]:
+        return await asyncio.to_thread(_store.search_messages, query, limit=limit, sender=sender)
 
     async def list_conversations(self) -> list[dict]:
         convs = await asyncio.to_thread(_store.list_conversations, own_number=self.account)
@@ -735,6 +736,15 @@ class SignalClient:
     async def delete_local_messages(self, recipient: str) -> int:
         """Delete locally stored messages for one contact or group. Returns count deleted."""
         return await asyncio.to_thread(_store.delete_conversation_messages, recipient)
+
+    async def export_messages(
+        self,
+        fmt: str = "json",
+        recipient: str | None = None,
+        since: datetime | None = None,
+    ) -> str:
+        """Export messages as JSON or CSV text."""
+        return await asyncio.to_thread(_store.export_messages, fmt, recipient, since)
 
     async def get_unread_messages(self, limit: int = 50) -> list[Message]:
         return await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)

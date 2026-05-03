@@ -159,22 +159,30 @@ def _safe_fts_query(query: str) -> str:
     return " ".join(f'"{t.replace(chr(34), "")}"' for t in tokens if t)
 
 
-def search_messages(query: str, limit: int = 50) -> list[Message]:
-    """Full-text search across all stored messages. Falls back to LIKE on FTS error."""
+def search_messages(
+    query: str, limit: int = 50, sender: str | None = None
+) -> list[Message]:
+    """Full-text search across all stored messages. Falls back to LIKE on FTS error.
+
+    sender: if given, restrict results to messages from this phone number.
+    """
     init_db()
     with _db() as conn:
+        sender_clause = "AND m.sender = ?" if sender else ""
+        sender_args = [sender] if sender else []
         try:
             rows = conn.execute(
-                """SELECT m.* FROM messages m
+                f"""SELECT m.* FROM messages m
                    JOIN messages_fts f ON m.id = f.id
                    WHERE messages_fts MATCH ?
+                   {sender_clause}
                    ORDER BY m.timestamp DESC LIMIT ?""",
-                (_safe_fts_query(query), limit),
+                [_safe_fts_query(query)] + sender_args + [limit],
             ).fetchall()
         except Exception:
             rows = conn.execute(
-                "SELECT * FROM messages WHERE body LIKE ? ORDER BY timestamp DESC LIMIT ?",
-                (f"%{query}%", limit),
+                f"SELECT * FROM messages WHERE body LIKE ? {sender_clause} ORDER BY timestamp DESC LIMIT ?",
+                [f"%{query}%"] + sender_args + [limit],
             ).fetchall()
         return [_row_to_message(conn, r) for r in rows]
 
@@ -315,6 +323,80 @@ def delete_conversation_messages(recipient: str) -> int:
         conn.execute(f"DELETE FROM messages WHERE id IN ({ph})", ids)
         conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
     return count
+
+
+def export_messages(
+    fmt: str = "json",
+    recipient: str | None = None,
+    since: datetime | None = None,
+) -> str:
+    """Export messages as JSON or CSV text.
+
+    recipient: if given, export only that conversation (number or group_id).
+    since: if given, only messages at or after this datetime.
+    fmt: "json" or "csv".
+    """
+    import csv
+    import io
+    import json as _json
+
+    init_db()
+    with _db() as conn:
+        params: list = []
+        clauses: list[str] = []
+        if recipient:
+            clauses.append(
+                "(group_id = ? OR (group_id IS NULL AND (sender = ? OR recipient = ?)))"
+            )
+            params.extend([recipient, recipient, recipient])
+        if since:
+            clauses.append("timestamp >= ?")
+            params.append(int(since.timestamp() * 1000))
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = conn.execute(
+            f"SELECT * FROM messages {where} ORDER BY timestamp ASC",
+            params,
+        ).fetchall()
+        messages = [_row_to_message(conn, r) for r in rows]
+
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["id", "timestamp", "sender", "recipient", "group_id", "body", "quote_id", "is_read"])
+        for m in messages:
+            writer.writerow([
+                m.id,
+                m.timestamp.isoformat(),
+                m.sender,
+                m.recipient or "",
+                m.group_id or "",
+                m.body,
+                m.quote_id or "",
+                int(m.is_read),
+            ])
+        return buf.getvalue()
+
+    # JSON (default)
+    return _json.dumps(
+        [
+            {
+                "id": m.id,
+                "timestamp": m.timestamp.isoformat(),
+                "sender": m.sender,
+                "recipient": m.recipient,
+                "group_id": m.group_id,
+                "body": m.body,
+                "quote_id": m.quote_id,
+                "is_read": m.is_read,
+                "attachments": [
+                    {"content_type": a.content_type, "filename": a.filename, "size": a.size}
+                    for a in m.attachments
+                ],
+            }
+            for m in messages
+        ],
+        indent=2,
+    )
 
 
 def get_stats() -> dict:
