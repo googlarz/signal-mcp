@@ -145,6 +145,14 @@ async def test_tool_delete_message():
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_tool_delete_group_message():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("delete_group_message", {"group_id": "grp1==", "target_timestamp": 1700000000000})
+    assert "deleted" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_tool_send_read_receipt():
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     result = await call_tool("send_read_receipt", {"sender": "+19999999999", "timestamps": [1700000000000]})

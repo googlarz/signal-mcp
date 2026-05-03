@@ -154,9 +154,10 @@ def groups(as_json: bool):
 @cli.command()
 @click.argument("recipient")
 @click.option("--limit", default=50, show_default=True, help="Max messages")
+@click.option("--offset", default=0, show_default=True, help="Skip N messages (for pagination)")
 @click.option("--since", default=None, help="Only messages after this date (YYYY-MM-DD or ISO datetime)")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def history(recipient: str, limit: int, since: str | None, as_json: bool):
+def history(recipient: str, limit: int, offset: int, since: str | None, as_json: bool):
     """Show message history with RECIPIENT (phone number or group ID). Reads local store."""
     from datetime import datetime as _dt
     since_dt = None
@@ -173,7 +174,7 @@ def history(recipient: str, limit: int, since: str | None, as_json: bool):
 
     async def _run():
         async with SignalClient() as client:
-            messages = await client.get_conversation(recipient, limit=limit, since=since_dt)
+            messages = await client.get_conversation(recipient, limit=limit, offset=offset, since=since_dt)
             if not messages:
                 click.echo("No messages found.")
                 return
@@ -182,6 +183,47 @@ def history(recipient: str, limit: int, since: str | None, as_json: bool):
             else:
                 for msg in messages:
                     _print_message(msg)
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── note ──────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("message")
+def note(message: str):
+    """Send a note to yourself (saved messages)."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            result = await client.send_note_to_self(message)
+            click.echo(f"Note saved (timestamp: {result.timestamp})")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── edit ──────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("recipient")
+@click.argument("timestamp", type=int)
+@click.argument("message")
+def edit(recipient: str, timestamp: int, message: str):
+    """Edit a previously sent message. RECIPIENT is a phone number or group ID."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            if recipient.startswith("+"):
+                await client.edit_message(timestamp, message, recipient=recipient)
+            else:
+                await client.edit_message(timestamp, message, group_id=recipient)
+            click.echo("Message edited.")
     try:
         run(_run())
     except SignalError as e:

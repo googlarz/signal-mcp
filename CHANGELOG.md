@@ -2,6 +2,22 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.3.1] — 2026-05-03
+
+### Bug fixes
+- `edit_message` now updates the local SQLite store (body + FTS index) — history was showing stale text after edits
+- `delete_group_message` — added missing server-level test
+
+### CLI additions
+- `signal-mcp note "message"` — send a note to yourself
+- `signal-mcp edit <recipient> <timestamp> <message>` — edit a sent message
+- `signal-mcp history` — new `--offset` option for pagination
+
+### PyPI
+- README documents the one-time trusted publisher setup on pypi.org
+
+---
+
 ## [1.3.0] — 2026-05-03
 
 ### New tools (2)

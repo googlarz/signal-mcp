@@ -170,6 +170,28 @@ def get_unread_messages(own_number: str = "", limit: int = 50) -> list[Message]:
         return [_row_to_message(conn, r) for r in reversed(rows)]
 
 
+def update_message_body(target_timestamp_ms: int, new_body: str) -> None:
+    """Update a stored message's body after an edit. Also syncs FTS index."""
+    init_db()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT rowid, id, sender, body FROM messages WHERE timestamp = ?",
+            (target_timestamp_ms,),
+        ).fetchone()
+        if not row:
+            return
+        conn.execute("UPDATE messages SET body = ? WHERE timestamp = ?", (new_body, target_timestamp_ms))
+        # Sync FTS: remove stale entry, insert updated
+        conn.execute(
+            "INSERT INTO messages_fts(messages_fts, rowid, id, body, sender) VALUES ('delete', ?, ?, ?, ?)",
+            (row["rowid"], row["id"], row["body"], row["sender"]),
+        )
+        conn.execute(
+            "INSERT INTO messages_fts(rowid, id, body, sender) VALUES (?, ?, ?, ?)",
+            (row["rowid"], row["id"], new_body, row["sender"]),
+        )
+
+
 def mark_as_read(message_ids: list[str]) -> None:
     """Mark specific messages as read in the store."""
     if not message_ids:

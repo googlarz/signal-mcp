@@ -45,10 +45,18 @@ brew install sqlcipher
 ## Install
 
 ```bash
+# From PyPI (once configured — see below)
+pip install signal-mcp
+# or
+uv tool install signal-mcp
+
+# From source
 git clone https://github.com/googlarz/signal-mcp
 cd signal-mcp
 uv tool install .
 ```
+
+> **PyPI publishing:** The release workflow uses OIDC trusted publisher. To enable it, go to [pypi.org](https://pypi.org) → Your projects → signal-mcp → Publishing → Add a trusted publisher → set **Owner** `googlarz`, **Repository** `signal-mcp`, **Workflow** `publish.yml`, **Environment** `pypi`. After that, every GitHub Release automatically publishes to PyPI.
 
 ## Connect to Claude Code
 

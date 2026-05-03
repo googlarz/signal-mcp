@@ -517,7 +517,7 @@ class SignalClient:
         recipient: str | None = None,
         group_id: str | None = None,
     ) -> None:
-        """Edit a previously sent message."""
+        """Edit a previously sent message and update the local store."""
         if not recipient and not group_id:
             raise SignalError("Either recipient or group_id must be provided")
         params: dict = {"targetTimestamp": target_timestamp, "message": message}
@@ -526,6 +526,7 @@ class SignalClient:
         else:
             params["recipient"] = [recipient]
         await self._rpc("editMessage", params)
+        _store.update_message_body(target_timestamp, message)
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
         await self._rpc("sendReadReceipt", {

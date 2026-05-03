@@ -293,3 +293,32 @@ def test_migration_adds_recipient_column(tmp_path, monkeypatch):
     # Old data still readable
     msgs = store.get_conversation("+1")
     assert len(msgs) == 1
+
+
+# ── update_message_body ───────────────────────────────────────────────────────
+
+def test_update_message_body_changes_body():
+    ts = datetime(2024, 6, 1, 12, 0, 0)
+    ts_ms = int(ts.timestamp() * 1000)
+    store.save_message(make_msg(id="edit1", sender="+1", body="original", ts=ts))
+    store.update_message_body(ts_ms, "edited")
+    msgs = store.get_conversation("+1")
+    assert msgs[0].body == "edited"
+
+
+def test_update_message_body_noop_on_unknown_ts():
+    # Should not raise even if timestamp doesn't match any message
+    store.update_message_body(9999999999999, "ghost")
+
+
+def test_update_message_body_syncs_fts():
+    ts = datetime(2024, 6, 1, 12, 0, 0)
+    ts_ms = int(ts.timestamp() * 1000)
+    store.save_message(make_msg(id="fts1", sender="+1", body="findme original", ts=ts))
+    store.update_message_body(ts_ms, "findme edited")
+    # FTS should find new text, not old
+    results = store.search_messages("edited")
+    assert len(results) == 1
+    assert results[0].body == "findme edited"
+    results_old = store.search_messages("original")
+    assert results_old == []

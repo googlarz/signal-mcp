@@ -553,6 +553,21 @@ async def test_receive_message_parses_quote(client):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_edit_message_updates_store(client):
+    """edit_message must update the local store body."""
+    from datetime import datetime as _dt
+    ts = _dt(2024, 6, 1, 12, 0, 0)
+    ts_ms = int(ts.timestamp() * 1000)
+    _store_mod.save_message(Message(id=f"sent_{ts_ms}_+19999999999", sender="+10000000000",
+                                    recipient="+19999999999", body="original", timestamp=ts))
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.edit_message(ts_ms, "edited", recipient="+19999999999")
+    msgs = _store_mod.get_conversation("+19999999999")
+    assert msgs[0].body == "edited"
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_rpc_retries_on_connect_error(client):
     """_rpc retries once on ConnectError before giving up."""
     call_count = 0
