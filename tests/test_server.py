@@ -185,10 +185,106 @@ async def test_tool_trust_identity():
 
 @pytest.mark.asyncio
 async def test_tool_store_stats_no_daemon_needed(monkeypatch):
-    # store_stats should work even when ensure_daemon raises
     async def fail(): raise Exception("daemon unavailable")
     import signal_mcp.server as server_mod
     monkeypatch.setattr(server_mod._client, "ensure_daemon", fail)
     result = await call_tool("store_stats", {})
-    # Should succeed (store_stats is daemon-free)
     assert "total_messages" in result[0].text
+
+
+# ── New v1.2 tools ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_unblock_contact():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("unblock_contact", {"number": "+19999999999"})
+    assert "unblocked" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_remove_contact():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("remove_contact", {"number": "+19999999999"})
+    assert "removed" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_update_profile():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("update_profile", {"name": "Alice", "about": "Hey there"})
+    assert "profile updated" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_create_group():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"groupId": "newgrp=="})))
+    result = await call_tool("create_group", {"name": "My Group", "members": ["+19999999999"]})
+    assert "group created" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_join_group():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"groupId": "joinedgrp=="})))
+    result = await call_tool("join_group", {"uri": "https://signal.group/#abc"})
+    assert "joined group" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_list_devices():
+    devices = [{"id": 1, "name": "iPhone"}, {"id": 2, "name": "MacBook"}]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(devices)))
+    result = await call_tool("list_devices", {})
+    assert "iPhone" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_add_device():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("add_device", {"uri": "sgnl://linkdevice?uuid=abc&pub_key=xyz"})
+    assert "device linked" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_remove_device():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("remove_device", {"device_id": 2})
+    assert "device removed" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_tool_get_own_number():
+    result = await call_tool("get_own_number", {})
+    assert "+10000000000" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_read_receipt_marks_store_read():
+    """send_read_receipt should update is_read in local store."""
+    from signal_mcp.models import Message
+    from datetime import datetime
+    # Save a message that will be "read"
+    msg = Message(id="1700000000000", sender="+2", body="hi",
+                  timestamp=datetime(2024, 1, 1))
+    _store_mod.save_message(msg)
+    assert _store_mod.get_unread_messages(own_number="+10000000000")[0].id == "1700000000000"
+
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await call_tool("send_read_receipt", {"sender": "+2", "timestamps": [1700000000000]})
+    assert _store_mod.get_unread_messages(own_number="+10000000000") == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_update_group():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("update_group", {"group_id": "grp1==", "name": "New Name"})
+    assert "group updated" in result[0].text

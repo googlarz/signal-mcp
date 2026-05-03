@@ -17,7 +17,7 @@ _client: SignalClient | None = None
 # Tools that don't need the signal-cli daemon (read from local store only)
 _DAEMON_FREE = {
     "import_desktop", "store_stats", "list_conversations",
-    "get_conversation", "search_messages", "get_unread",
+    "get_conversation", "search_messages", "get_unread", "get_own_number",
 }
 
 
@@ -181,6 +181,97 @@ TOOLS = [
             },
             "required": ["number"],
         },
+    ),
+    Tool(
+        name="unblock_contact",
+        description="Unblock a previously blocked Signal contact",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "number": {"type": "string", "description": "Phone number to unblock"},
+            },
+            "required": ["number"],
+        },
+    ),
+    Tool(
+        name="remove_contact",
+        description="Remove a contact from the local contact list",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "number": {"type": "string", "description": "Phone number to remove"},
+            },
+            "required": ["number"],
+        },
+    ),
+    Tool(
+        name="update_profile",
+        description="Update your own Signal profile (name, about text, avatar)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Display name to set"},
+                "about": {"type": "string", "description": "About/bio text"},
+                "avatar_path": {"type": "string", "description": "Path to avatar image file"},
+                "remove_avatar": {"type": "boolean", "description": "Remove current avatar", "default": False},
+            },
+        },
+    ),
+    Tool(
+        name="create_group",
+        description="Create a new Signal group",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Group name"},
+                "members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers of initial members"},
+                "description": {"type": "string", "description": "Optional group description"},
+            },
+            "required": ["name", "members"],
+        },
+    ),
+    Tool(
+        name="join_group",
+        description="Join a Signal group via invite link",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "uri": {"type": "string", "description": "Group invite link (https://signal.group/#...)"},
+            },
+            "required": ["uri"],
+        },
+    ),
+    Tool(
+        name="list_devices",
+        description="List all devices linked to your Signal account",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="add_device",
+        description="Link a new device to your Signal account using a device link URI",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "uri": {"type": "string", "description": "Device link URI (from signal-cli link output)"},
+            },
+            "required": ["uri"],
+        },
+    ),
+    Tool(
+        name="remove_device",
+        description="Unlink a device from your Signal account",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "device_id": {"type": "integer", "description": "Device ID (get from list_devices)"},
+            },
+            "required": ["device_id"],
+        },
+    ),
+    Tool(
+        name="get_own_number",
+        description="Get your own Signal phone number (the account this server is running as)",
+        inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="store_stats",
@@ -408,6 +499,50 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "block_contact":
             await client.block_contact(arguments["number"])
             return _ok({"status": "blocked", "number": arguments["number"]})
+
+        elif name == "unblock_contact":
+            await client.unblock_contact(arguments["number"])
+            return _ok({"status": "unblocked", "number": arguments["number"]})
+
+        elif name == "remove_contact":
+            await client.remove_contact(arguments["number"])
+            return _ok({"status": "removed", "number": arguments["number"]})
+
+        elif name == "update_profile":
+            await client.update_profile(
+                name=arguments.get("name"),
+                about=arguments.get("about"),
+                avatar_path=arguments.get("avatar_path"),
+                remove_avatar=arguments.get("remove_avatar", False),
+            )
+            return _ok({"status": "profile updated"})
+
+        elif name == "create_group":
+            result = await client.create_group(
+                arguments["name"],
+                arguments["members"],
+                description=arguments.get("description"),
+            )
+            return _ok({"status": "group created", **result})
+
+        elif name == "join_group":
+            result = await client.join_group(arguments["uri"])
+            return _ok({"status": "joined group", **result})
+
+        elif name == "list_devices":
+            devices = await client.list_devices()
+            return _ok(devices)
+
+        elif name == "add_device":
+            await client.add_device(arguments["uri"])
+            return _ok({"status": "device linked"})
+
+        elif name == "remove_device":
+            await client.remove_device(arguments["device_id"])
+            return _ok({"status": "device removed", "device_id": arguments["device_id"]})
+
+        elif name == "get_own_number":
+            return _ok({"number": client.get_own_number()})
 
         elif name == "get_unread":
             messages = client.get_unread_messages(limit=arguments.get("limit", 50))

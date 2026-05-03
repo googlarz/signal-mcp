@@ -19,11 +19,11 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **27 MCP tools** — full coverage of everything signal-cli supports
+- **36 MCP tools** — full coverage of everything signal-cli supports
 - **Complete conversation history** — both sent and received messages stored locally
 - **Full-text search** — FTS5 SQLite index across all messages
 - **Signal Desktop import** — pull your entire message history in one command
-- **Background service** — macOS LaunchAgent captures messages automatically
+- **Background service** — macOS LaunchAgent or Linux systemd unit captures messages automatically
 - **Full CLI** — use Signal from your terminal without Claude
 - **100% local** — no cloud, no third-party services, your data stays on your machine
 - **Auto-starts daemon** — no manual process management
@@ -112,7 +112,16 @@ Restart Claude Code. Signal tools will appear automatically.
 | `list_identities` | List identity keys and trust levels |
 | `trust_identity` | Trust a contact's identity key |
 | `update_group` | Rename group, add/remove members, set expiry timer |
+| `create_group` | Create a new Signal group |
+| `join_group` | Join a group via invite link |
 | `set_expiration_timer` | Set or disable disappearing messages |
+| `unblock_contact` | Unblock a previously blocked contact |
+| `remove_contact` | Remove a contact from local list |
+| `update_profile` | Update your own name, about text, or avatar |
+| `list_devices` | List all linked devices on your account |
+| `add_device` | Link a new device |
+| `remove_device` | Unlink a device |
+| `get_own_number` | Get your own Signal phone number |
 | `store_stats` | Stored message count and date range |
 | `import_desktop` | Import full history from Signal Desktop |
 
@@ -144,7 +153,7 @@ signal-mcp store-stats
 # Signal Desktop import (macOS — full history)
 signal-mcp import-desktop
 
-# Background service (macOS)
+# Background service (macOS LaunchAgent or Linux systemd)
 signal-mcp install-service    # auto-starts on login, captures all messages
 signal-mcp uninstall-service
 

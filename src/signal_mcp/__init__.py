@@ -1,3 +1,3 @@
 """signal-mcp: Complete Signal MCP server and CLI via signal-cli."""
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

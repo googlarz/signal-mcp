@@ -187,6 +187,13 @@ class SignalClient:
             params["message"] = caption
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        _store.save_message(Message(
+            id=f"sent_{ts}_{recipient}",
+            sender=self.account,
+            recipient=recipient,
+            body=caption,
+            timestamp=datetime.fromtimestamp(ts / 1000),
+        ))
         return SendResult(timestamp=ts, recipient=recipient, success=True)
 
     async def send_group_attachment(self, group_id: str, path: str, caption: str = "") -> SendResult:
@@ -304,6 +311,30 @@ class SignalClient:
     async def block_contact(self, number: str) -> None:
         await self._rpc("block", {"recipient": [number]})
 
+    async def unblock_contact(self, number: str) -> None:
+        await self._rpc("unblock", {"recipient": [number]})
+
+    async def remove_contact(self, number: str) -> None:
+        await self._rpc("removeContact", {"recipient": number})
+
+    async def update_profile(
+        self,
+        name: str | None = None,
+        about: str | None = None,
+        avatar_path: str | None = None,
+        remove_avatar: bool = False,
+    ) -> None:
+        params: dict = {}
+        if name is not None:
+            params["name"] = name
+        if about is not None:
+            params["about"] = about
+        if avatar_path is not None:
+            params["avatarPath"] = str(Path(avatar_path).expanduser().resolve())
+        if remove_avatar:
+            params["removeAvatar"] = True
+        await self._rpc("updateProfile", params or None)
+
     # ── Groups ────────────────────────────────────────────────────────────────
 
     async def list_groups(self) -> list[Group]:
@@ -332,6 +363,19 @@ class SignalClient:
             ))
         return groups
 
+    async def create_group(
+        self,
+        name: str,
+        members: list[str],
+        description: str | None = None,
+    ) -> dict:
+        """Create a new Signal group. Returns the new group info."""
+        params: dict = {"name": name, "member": members}
+        if description:
+            params["description"] = description
+        result = await self._rpc("updateGroup", params)
+        return result if isinstance(result, dict) else {}
+
     async def update_group(
         self,
         group_id: str,
@@ -355,6 +399,24 @@ class SignalClient:
             params["expiration"] = expiration_seconds
         await self._rpc("updateGroup", params)
 
+    async def join_group(self, uri: str) -> dict:
+        """Join a group via invite link URI."""
+        result = await self._rpc("joinGroup", {"uri": uri})
+        return result if isinstance(result, dict) else {}
+
+    async def list_devices(self) -> list[dict]:
+        """List all linked devices on this account."""
+        result = await self._rpc("listDevices")
+        return result if isinstance(result, list) else [result] if result else []
+
+    async def add_device(self, uri: str) -> None:
+        """Link a new device using a device link URI (from signal-cli link output)."""
+        await self._rpc("addDevice", {"uri": uri})
+
+    async def remove_device(self, device_id: int) -> None:
+        """Unlink a device by its ID (get IDs from list_devices)."""
+        await self._rpc("removeDevice", {"deviceId": device_id})
+
     # ── History & Search ──────────────────────────────────────────────────────
 
     async def get_conversation(
@@ -370,6 +432,9 @@ class SignalClient:
 
     def get_unread_messages(self, limit: int = 50) -> list[Message]:
         return _store.get_unread_messages(own_number=self.account, limit=limit)
+
+    def get_own_number(self) -> str:
+        return self.account
 
     # ── Message actions ───────────────────────────────────────────────────────
 
@@ -390,6 +455,8 @@ class SignalClient:
             "recipient": [sender],
             "targetTimestamps": timestamps,
         })
+        # Mark as read in local store — received message IDs are str(timestamp_ms)
+        _store.mark_as_read([str(ts) for ts in timestamps])
 
     async def set_expiration_timer(
         self, recipient: str | None = None, group_id: str | None = None, expiration: int = 0
