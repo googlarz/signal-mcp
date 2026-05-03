@@ -21,6 +21,7 @@ _DAEMON_FREE = {
     "import_desktop", "store_stats", "list_conversations",
     "get_conversation", "search_messages", "get_unread", "get_own_number",
     "list_attachments", "get_attachment",
+    "clear_local_store", "delete_local_messages",
 }
 # Note: get_configuration, update_configuration, list_sticker_packs, add_sticker_pack
 # all require the daemon (they call signal-cli JSON-RPC)
@@ -472,6 +473,28 @@ TOOLS = [
 
 TOOLS += [
     Tool(
+        name="clear_local_store",
+        description="Delete ALL locally stored messages from the signal-mcp database. This does NOT delete messages from Signal — only from the local store. Requires confirm=true.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "confirm": {"type": "boolean", "description": "Must be true to proceed — prevents accidental deletion"},
+            },
+            "required": ["confirm"],
+        },
+    ),
+    Tool(
+        name="delete_local_messages",
+        description="Delete locally stored messages for one contact or group. Does NOT unsend from Signal — only removes from local store.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "recipient": {"type": "string", "description": "Phone number or group ID whose messages to delete"},
+            },
+            "required": ["recipient"],
+        },
+    ),
+    Tool(
         name="get_configuration",
         description="Get current Signal account configuration (read receipts, typing indicators, link previews)",
         inputSchema={"type": "object", "properties": {}},
@@ -595,6 +618,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "get_attachment":       ["filename"],
             "add_sticker_pack":     ["uri"],
             "edit_message":         ["target_timestamp", "message"],
+            "clear_local_store":    ["confirm"],
+            "delete_local_messages":["recipient"],
         }
         if name in _REQUIRED:
             err = _require(arguments, *_REQUIRED[name])
@@ -669,14 +694,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     since = datetime.fromisoformat(arguments["since"])
                 except ValueError:
                     return _err(f"Invalid since date: {arguments['since']}")
+            limit = arguments.get("limit", 50)
+            offset = arguments.get("offset", 0)
             await client._ensure_contact_cache()
             messages = await client.get_conversation(
-                arguments["recipient"],
-                limit=arguments.get("limit", 50),
-                offset=arguments.get("offset", 0),
-                since=since,
+                arguments["recipient"], limit=limit, offset=offset, since=since,
             )
-            return _ok([client._enrich_message(m) for m in messages])
+            total = await asyncio.to_thread(
+                _store.count_conversation, arguments["recipient"], since=since
+            )
+            return _ok({
+                "messages": [client._enrich_message(m) for m in messages],
+                "total": total,
+                "has_more": total > offset + len(messages),
+                "limit": limit,
+                "offset": offset,
+            })
 
         elif name == "search_messages":
             await client._ensure_contact_cache()
@@ -857,6 +890,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "add_sticker_pack":
             await client.add_sticker_pack(arguments["uri"])
             return _ok({"status": "installed"})
+
+        elif name == "clear_local_store":
+            if not arguments.get("confirm"):
+                return _err("confirm must be true to delete all local messages")
+            count = await client.clear_local_store()
+            return _ok({"deleted": count, "status": "cleared"})
+
+        elif name == "delete_local_messages":
+            count = await client.delete_local_messages(arguments["recipient"])
+            return _ok({"deleted": count, "status": "deleted"})
 
         else:
             return _err(f"Unknown tool: {name}")

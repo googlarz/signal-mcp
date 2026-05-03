@@ -24,6 +24,9 @@ def reset_client(monkeypatch, tmp_path):
     # Redirect store to temp DB and reset init flag for every test
     monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(_store_mod, "_initialized", False)
+    if getattr(_store_mod._thread_local, "conn", None) is not None:
+        _store_mod._thread_local.conn.close()
+        _store_mod._thread_local.conn = None
 
     test_client = SignalClient(account="+10000000000")
     monkeypatch.setattr("signal_mcp.server._client", test_client)
@@ -420,12 +423,16 @@ async def test_tool_get_conversation_pagination():
     result_all = await call_tool("get_conversation", {"recipient": "+2", "limit": 5})
     result_page = await call_tool("get_conversation", {"recipient": "+2", "limit": 3, "offset": 0})
     result_next = await call_tool("get_conversation", {"recipient": "+2", "limit": 3, "offset": 3})
-    all_msgs = json.loads(result_all[0].text)
+    all_data = json.loads(result_all[0].text)
     page1 = json.loads(result_page[0].text)
     page2 = json.loads(result_next[0].text)
-    assert len(all_msgs) == 5
-    assert len(page1) == 3
-    assert len(page2) == 2
+    assert len(all_data["messages"]) == 5
+    assert all_data["total"] == 5
+    assert all_data["has_more"] is False
+    assert len(page1["messages"]) == 3
+    assert page1["has_more"] is True
+    assert len(page2["messages"]) == 2
+    assert page2["has_more"] is False
 
 
 # ── New tools ─────────────────────────────────────────────────────────────────
@@ -528,8 +535,8 @@ async def test_get_conversation_enriches_sender_name(monkeypatch):
         timestamp=datetime(2024, 1, 1),
     ))
     result = await call_tool("get_conversation", {"recipient": "+19999999999"})
-    msgs = json.loads(result[0].text)
-    assert msgs[0]["sender_name"] == "Alice"
+    data = json.loads(result[0].text)
+    assert data["messages"][0]["sender_name"] == "Alice"
 
 
 # ── Input validation ───────────────────────────────────────────────────────────
@@ -596,3 +603,80 @@ async def test_tool_add_sticker_pack():
 async def test_tool_add_sticker_pack_missing_uri():
     result = await call_tool("add_sticker_pack", {})
     assert "Missing required parameter" in result[0].text
+
+
+# ── Store management tools ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tool_clear_local_store():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="x1", sender="+1", body="a", timestamp=_dt(2024,1,1)))
+    _store_mod.save_message(Message(id="x2", sender="+2", body="b", timestamp=_dt(2024,1,2)))
+    result = await call_tool("clear_local_store", {"confirm": True})
+    data = json.loads(result[0].text)
+    assert data["deleted"] == 2
+    assert _store_mod.get_stats()["total_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_clear_local_store_requires_confirm():
+    result = await call_tool("clear_local_store", {"confirm": False})
+    assert "Error" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_tool_delete_local_messages():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="d1", sender="+19999999999", body="hi", timestamp=_dt(2024,1,1)))
+    _store_mod.save_message(Message(id="d2", sender="+18888888888", body="yo", timestamp=_dt(2024,1,2)))
+    result = await call_tool("delete_local_messages", {"recipient": "+19999999999"})
+    data = json.loads(result[0].text)
+    assert data["deleted"] == 1
+    assert _store_mod.get_stats()["total_messages"] == 1
+
+
+# ── has_more / total in get_conversation ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_conversation_returns_pagination_metadata():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    for i in range(5):
+        _store_mod.save_message(Message(
+            id=f"pg{i}", sender="+19999999999", body=f"msg{i}",
+            timestamp=_dt(2024, 1, i + 1),
+        ))
+    result = await call_tool("get_conversation", {"recipient": "+19999999999", "limit": 3})
+    data = json.loads(result[0].text)
+    assert "messages" in data
+    assert data["total"] == 5
+    assert data["has_more"] is True
+    assert data["limit"] == 3
+    assert len(data["messages"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_has_more_false_when_all_returned():
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    for i in range(3):
+        _store_mod.save_message(Message(
+            id=f"all{i}", sender="+19999999999", body=f"msg{i}",
+            timestamp=_dt(2024, 1, i + 1),
+        ))
+    result = await call_tool("get_conversation", {"recipient": "+19999999999"})
+    data = json.loads(result[0].text)
+    assert data["total"] == 3
+    assert data["has_more"] is False
+
+
+# ── E.164 validation ───────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_message_invalid_number():
+    result = await call_tool("send_message", {"recipient": "notanumber", "message": "hi"})
+    assert "Error" in result[0].text
+    assert "E.164" in result[0].text

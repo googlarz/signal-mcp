@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **46 MCP tools** — complete coverage of everything signal-cli exposes
+- **48 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -245,9 +245,11 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 
 | Tool | Description |
 |---|---|
-| `import_desktop` | Import full message history from Signal Desktop (macOS/Linux). Requires sqlcipher. |
+| `import_desktop` | Import full message history from Signal Desktop (macOS/Linux/Windows). Requires sqlcipher. |
 | `list_attachments` | List all locally downloaded attachments (photos, files received via Signal). |
 | `get_attachment` | Get details about a specific downloaded attachment by filename. |
+| `clear_local_store` | Delete ALL locally stored messages (requires `confirm: true`). Does not unsend from Signal. |
+| `delete_local_messages` | Delete locally stored messages for one contact or group. |
 
 ## CLI Usage
 

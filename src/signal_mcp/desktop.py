@@ -99,11 +99,64 @@ def _get_keychain_password() -> bytes:
         # Signal Desktop on Linux falls back to hardcoded password when no keyring is available
         return b"peanuts"
 
+    elif system == "Windows":
+        # On Windows, Electron's safeStorage uses DPAPI to encrypt the key directly.
+        # We call CryptUnprotectData via ctypes to decrypt — no PBKDF2 involved.
+        # The decrypted bytes ARE the raw DB key (32 bytes → 64 hex chars).
+        raise DesktopImportError(
+            "Windows: use _decrypt_dpapi_key() instead of _get_keychain_password() + _decrypt_key()"
+        )
+
     else:
         raise DesktopImportError(
-            f"Platform '{system}' is not supported for automatic keychain access.\n"
-            "Use signal-mcp import-desktop --key <hex-key> to provide the DB key manually."
+            f"Platform '{system}' is not supported for automatic keychain access."
         )
+
+
+def _decrypt_dpapi_key(encrypted_hex: str) -> str:
+    """Windows only: DPAPI-decrypt Signal Desktop's encryptedKey → raw DB key hex."""
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", ctypes.wintypes.DWORD),
+                ("pbData", ctypes.POINTER(ctypes.c_char)),
+            ]
+
+        raw = bytes.fromhex(encrypted_hex)
+        # Strip known Electron prefixes (v10, v11) if present
+        for prefix in (b"v10", b"v11"):
+            if raw.startswith(prefix):
+                raw = raw[len(prefix):]
+                break
+
+        p = ctypes.create_string_buffer(raw, len(raw))
+        blobin = DATA_BLOB(len(raw), p)
+        blobout = DATA_BLOB()
+        ok = ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(blobin), None, None, None, None, 0, ctypes.byref(blobout)
+        )
+        if not ok:
+            raise DesktopImportError(
+                "DPAPI decryption failed — run as the same Windows user that installed Signal Desktop"
+            )
+        result = ctypes.string_at(blobout.pbData, blobout.cbData)
+        ctypes.windll.kernel32.LocalFree(blobout.pbData)
+        return result.hex()
+    except DesktopImportError:
+        raise
+    except Exception as exc:
+        raise DesktopImportError(f"Windows keychain error: {exc}") from exc
+
+
+def _get_db_key_hex(encrypted_hex: str) -> str:
+    """Return the raw SQLCipher DB key hex, handling all platforms."""
+    if platform.system() == "Windows":
+        return _decrypt_dpapi_key(encrypted_hex)
+    password = _get_keychain_password()
+    return _decrypt_key(encrypted_hex, password)
 
 
 def _decrypt_key(encrypted_hex: str, password: bytes) -> str:
@@ -273,11 +326,16 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dic
         raise DesktopImportError("No encryptedKey in Signal Desktop config.json")
 
     if progress_cb:
-        progress_cb("Unlocking macOS Keychain…")
+        system = platform.system()
+        if system == "Darwin":
+            progress_cb("Unlocking macOS Keychain…")
+        elif system == "Linux":
+            progress_cb("Unlocking Linux keychain (GNOME Keyring / libsecret)…")
+        else:
+            progress_cb("Decrypting Signal Desktop key…")
 
-    # 2. Get keychain password and decrypt the DB key
-    password = _get_keychain_password()
-    db_key_hex = _decrypt_key(encrypted_key_hex, password)
+    # 2. Derive the raw DB key (platform-specific)
+    db_key_hex = _get_db_key_hex(encrypted_key_hex)
 
     if progress_cb:
         progress_cb("Decrypting Signal Desktop database…")

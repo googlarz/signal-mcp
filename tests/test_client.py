@@ -23,6 +23,10 @@ def reset_store(monkeypatch, tmp_path):
     """Redirect store to temp DB for each test."""
     monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(_store_mod, "_initialized", False)
+    # Close any cached thread-local connection so next call reconnects to the new path
+    if getattr(_store_mod._thread_local, "conn", None) is not None:
+        _store_mod._thread_local.conn.close()
+        _store_mod._thread_local.conn = None
 
 
 @pytest.fixture
@@ -891,3 +895,103 @@ async def test_receive_stream_yields_messages(client):
 
     assert len(received) >= 1
     assert received[0].body == "hello"
+
+
+# ── Rate limiter ───────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_rate_limiter_allows_burst(client):
+    """First N calls within the burst should not sleep."""
+    import time
+    from signal_mcp.client import _RateLimiter
+    rl = _RateLimiter(rate=5, per=60.0)
+    start = time.monotonic()
+    for _ in range(5):
+        await rl.acquire()
+    elapsed = time.monotonic() - start
+    assert elapsed < 0.1  # burst — should be near-instant
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_throttles_after_burst():
+    """Calls beyond the burst should wait."""
+    from signal_mcp.client import _RateLimiter
+    rl = _RateLimiter(rate=2, per=1.0)  # 2/sec
+    await rl.acquire()
+    await rl.acquire()
+    # Third call should have to wait ~0.5s
+    import time
+    start = time.monotonic()
+    await rl.acquire()
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.4  # waited at least 0.4s
+
+
+# ── E.164 validation ──────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_message_rejects_invalid_number(client):
+    with pytest.raises(SignalError, match="E.164"):
+        await client.send_message("notanumber", "hi")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_message_accepts_valid_e164(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 999})))
+    result = await client.send_message("+12125551234", "hi")
+    assert result.success
+
+
+# ── Identity error hints ───────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_identity_error_includes_hint(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json={
+        "jsonrpc": "2.0", "id": 1,
+        "error": {"code": -1, "message": "Untrusted identity key for +19999999999"},
+    }))
+    with pytest.raises(SignalError, match="trust_identity"):
+        await client._rpc("send", {})
+
+
+# ── Enriched list_conversations ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_list_conversations_enriches_name(monkeypatch, client):
+    import signal_mcp.client as _client_mod
+    monkeypatch.setattr(_client_mod, "_contact_cache", {"+19999999999": "Alice"})
+    monkeypatch.setattr(_client_mod, "_contact_cache_loaded", True)
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="m1", sender="+19999999999", body="hi",
+        timestamp=__import__("datetime").datetime(2024, 1, 1),
+    ))
+    convs = await client.list_conversations()
+    assert convs[0]["name"] == "Alice"
+
+
+# ── Store management ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_clear_local_store(client):
+    _store_mod.init_db()
+    from datetime import datetime as _dt
+    _store_mod.save_message(Message(id="m1", sender="+1", body="a", timestamp=_dt(2024,1,1)))
+    _store_mod.save_message(Message(id="m2", sender="+2", body="b", timestamp=_dt(2024,1,2)))
+    count = await client.clear_local_store()
+    assert count == 2
+    assert _store_mod.get_stats()["total_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_local_messages(client):
+    _store_mod.init_db()
+    from datetime import datetime as _dt
+    _store_mod.save_message(Message(id="m1", sender="+19999999999", body="a", timestamp=_dt(2024,1,1)))
+    _store_mod.save_message(Message(id="m2", sender="+18888888888", body="b", timestamp=_dt(2024,1,2)))
+    count = await client.delete_local_messages("+19999999999")
+    assert count == 1
+    assert _store_mod.get_stats()["total_messages"] == 1

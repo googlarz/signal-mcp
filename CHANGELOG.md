@@ -2,6 +2,39 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.6.0] — 2026-05-03
+
+### Security
+
+- **Rate limiting** — all send operations (message, group message, attachment, sticker, note-to-self) share a token-bucket limiter of 20/minute; prevents a runaway session from spamming hundreds of messages
+- **E.164 phone number validation** — `send_message`, `send_attachment`, `send_sticker` validate the recipient format upfront and return a clear error instead of passing garbage to signal-cli
+- **DB file permissions** — `messages.db` is created with `0600` (owner read/write only); previously world-readable on default umask
+
+### UX
+
+- **`list_conversations` includes contact names** — every direct conversation now has a `"name"` field with the resolved display name; no need to cross-reference `list_contacts`
+- **`get_conversation` returns `total`, `has_more`, `limit`, `offset`** — Claude can now tell users "showing 50 of 312 messages" and know when to paginate
+- **Actionable identity-key error messages** — "Untrusted identity key" errors now include `→ Use trust_identity to resolve` guidance; rate-limit, not-a-member, invalid-number errors also get hints
+
+### New tools (2 → 48 total)
+
+- `clear_local_store` — delete ALL locally stored messages (requires `confirm: true`); does not unsend anything from Signal
+- `delete_local_messages` — delete locally stored messages for one contact or group
+
+### Performance
+
+- **SQLite connection reuse** — `store.py` uses `threading.local()` to cache one connection per thread; eliminates open/close overhead on every DB call
+
+### Cross-platform
+
+- **Windows Signal Desktop import** — DPAPI key decryption via `ctypes.windll.crypt32.CryptUnprotectData`; handles v10/v11 Electron key prefixes
+
+### Stats
+- 48 MCP tools total
+- 188 tests
+
+---
+
 ## [1.5.0] — 2026-05-03
 
 ### New tools (4)

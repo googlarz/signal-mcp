@@ -1,6 +1,8 @@
 """Local SQLite message store — persists received messages for history and search."""
 
 import sqlite3
+import stat
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -10,14 +12,25 @@ from .models import Attachment, Message
 DB_PATH = Path.home() / ".local" / "share" / "signal-mcp" / "messages.db"
 
 _initialized = False
+_thread_local = threading.local()  # per-thread connection cache
 
 
 def _connect() -> sqlite3.Connection:
+    """Return the cached per-thread connection, creating it if needed."""
+    conn = getattr(_thread_local, "conn", None)
+    if conn is not None:
+        return conn
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    _thread_local.conn = conn
+    # Restrict permissions to owner-only on first creation
+    try:
+        DB_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
     return conn
 
 
@@ -27,8 +40,10 @@ def _db():
     try:
         yield conn
         conn.commit()
-    finally:
-        conn.close()
+    except Exception:
+        conn.rollback()
+        raise
+    # Connection is kept open for reuse — not closed here
 
 
 def init_db() -> None:
@@ -243,6 +258,63 @@ def list_conversations(own_number: str = "") -> list[dict]:
             }
             for r in rows
         ]
+
+
+def count_conversation(
+    recipient: str, since: datetime | None = None
+) -> int:
+    """Return total message count matching get_conversation's filter — used for has_more."""
+    init_db()
+    with _db() as conn:
+        params: list = [recipient, recipient, recipient]
+        since_clause = ""
+        if since:
+            since_clause = "AND timestamp >= ?"
+            params.append(int(since.timestamp() * 1000))
+        row = conn.execute(
+            f"""SELECT COUNT(*) FROM messages
+               WHERE (group_id = ?
+                  OR (group_id IS NULL AND (sender = ? OR recipient = ?)))
+               {since_clause}""",
+            params,
+        ).fetchone()
+        return row[0] if row else 0
+
+
+def clear_store() -> int:
+    """Delete ALL locally stored messages and attachments. Returns count deleted."""
+    init_db()
+    with _db() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        conn.execute("DELETE FROM attachments")
+        conn.execute("DELETE FROM messages")
+        # Rebuild FTS index (content table is now empty)
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    return count
+
+
+def delete_conversation_messages(recipient: str) -> int:
+    """Delete all locally stored messages for one contact or group. Returns count deleted."""
+    init_db()
+    with _db() as conn:
+        params = (recipient, recipient, recipient)
+        count = conn.execute(
+            """SELECT COUNT(*) FROM messages
+               WHERE group_id = ? OR (group_id IS NULL AND (sender = ? OR recipient = ?))""",
+            params,
+        ).fetchone()[0]
+        if count == 0:
+            return 0
+        ids = [r[0] for r in conn.execute(
+            """SELECT id FROM messages
+               WHERE group_id = ? OR (group_id IS NULL AND (sender = ? OR recipient = ?))""",
+            params,
+        ).fetchall()]
+        ph = ",".join("?" * len(ids))
+        conn.execute(f"DELETE FROM attachments WHERE message_id IN ({ph})", ids)
+        conn.execute(f"DELETE FROM messages WHERE id IN ({ph})", ids)
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    return count
 
 
 def get_stats() -> dict:

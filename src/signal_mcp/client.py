@@ -3,6 +3,7 @@
 import asyncio
 import itertools
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -32,6 +33,60 @@ class SignalError(Exception):
 
 _rpc_id = itertools.count(1)
 
+# E.164 phone number validation
+_E164_RE = re.compile(r"^\+[1-9]\d{6,14}$")
+
+
+def _validate_e164(number: str) -> None:
+    """Raise SignalError if number is not valid E.164 format."""
+    if not _E164_RE.match(number):
+        raise SignalError(
+            f"Invalid phone number '{number}' — must be E.164 format (e.g. +12125551234)"
+        )
+
+
+_SIGNAL_ERROR_HINTS: list[tuple[str, str]] = [
+    ("untrusted identity", "The contact's device may have changed. Use trust_identity to resolve."),
+    ("unverified identity", "The contact's device may have changed. Use trust_identity to resolve."),
+    ("identity key mismatch", "Safety number changed. Use trust_identity to verify and continue."),
+    ("rate limit", "Signal rate limit reached — wait a minute before sending more messages."),
+    ("not a member", "You are not a member of this group. Use list_groups to verify group IDs."),
+    ("invalid number", "Phone number not registered on Signal. Verify with get_profile first."),
+    ("group not found", "Group ID not found. Use list_groups to get current group IDs."),
+]
+
+
+def _enhance_error(msg: str) -> str:
+    lower = msg.lower()
+    for keyword, hint in _SIGNAL_ERROR_HINTS:
+        if keyword in lower:
+            return f"{msg}\n→ {hint}"
+    return msg
+
+
+class _RateLimiter:
+    """Token bucket: burst up to `rate` calls then refill at rate/per calls per second."""
+
+    def __init__(self, rate: int = 20, per: float = 60.0):
+        self._rate = rate
+        self._per = per
+        self._tokens = float(rate)
+        self._last = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last
+            self._tokens = min(self._rate, self._tokens + elapsed * self._rate / self._per)
+            self._last = now
+            if self._tokens < 1:
+                wait = (1 - self._tokens) * self._per / self._rate
+                await asyncio.sleep(wait)
+                self._tokens = 0.0
+            else:
+                self._tokens -= 1.0
+
 # Module-level contact name cache: number → display_name
 _contact_cache: dict[str, str] = {}
 _contact_cache_loaded: bool = False
@@ -47,6 +102,7 @@ class SignalClient:
         self._rpc_sem = asyncio.Semaphore(4)   # allow up to 4 concurrent RPCs
         self._daemon_lock = asyncio.Lock()      # single-flight guard for ensure_daemon
         self._background_tasks: list[asyncio.Task] = []
+        self._rate_limiter = _RateLimiter(rate=20, per=60.0)  # 20 sends/minute
 
     @property
     def account(self) -> str:
@@ -193,7 +249,8 @@ class SignalClient:
 
         body = r.json()
         if "error" in body:
-            raise SignalError(f"signal-cli error: {body['error'].get('message', body['error'])}")
+            raw = body["error"].get("message", str(body["error"]))
+            raise SignalError(f"signal-cli error: {_enhance_error(raw)}")
         return body.get("result", {})
 
     # ── Messaging ─────────────────────────────────────────────────────────────
@@ -205,6 +262,8 @@ class SignalClient:
         quote_author: str | None = None,
         quote_timestamp: int | None = None,
     ) -> SendResult:
+        _validate_e164(recipient)
+        await self._rate_limiter.acquire()
         params: dict = {"recipient": [recipient], "message": message}
         if quote_author and quote_timestamp:
             params["quoteAuthor"] = quote_author
@@ -229,6 +288,7 @@ class SignalClient:
         quote_author: str | None = None,
         quote_timestamp: int | None = None,
     ) -> SendResult:
+        await self._rate_limiter.acquire()
         params: dict = {"groupId": group_id, "message": message}
         if mentions:
             params["mention"] = mentions
@@ -254,6 +314,8 @@ class SignalClient:
     async def send_attachment(
         self, recipient: str, path: str, caption: str = "", view_once: bool = False
     ) -> SendResult:
+        _validate_e164(recipient)
+        await self._rate_limiter.acquire()
         resolved = str(Path(path).expanduser().resolve())
         params: dict = {"recipient": [recipient], "attachment": [resolved]}
         if caption:
@@ -274,6 +336,7 @@ class SignalClient:
     async def send_group_attachment(
         self, group_id: str, path: str, caption: str = "", view_once: bool = False
     ) -> SendResult:
+        await self._rate_limiter.acquire()
         resolved = str(Path(path).expanduser().resolve())
         params: dict = {"groupId": group_id, "attachment": [resolved]}
         if caption:
@@ -295,6 +358,8 @@ class SignalClient:
         self, recipient: str, pack_id: str, sticker_id: int
     ) -> SendResult:
         """Send a sticker to a contact."""
+        _validate_e164(recipient)
+        await self._rate_limiter.acquire()
         params: dict = {
             "recipient": [recipient],
             "sticker": f"{pack_id}:{sticker_id}",
@@ -314,6 +379,7 @@ class SignalClient:
         self, group_id: str, pack_id: str, sticker_id: int
     ) -> SendResult:
         """Send a sticker to a group."""
+        await self._rate_limiter.acquire()
         params: dict = {
             "groupId": group_id,
             "sticker": f"{pack_id}:{sticker_id}",
@@ -656,7 +722,19 @@ class SignalClient:
         return await asyncio.to_thread(_store.search_messages, query, limit=limit)
 
     async def list_conversations(self) -> list[dict]:
-        return await asyncio.to_thread(_store.list_conversations, own_number=self.account)
+        convs = await asyncio.to_thread(_store.list_conversations, own_number=self.account)
+        for conv in convs:
+            if conv["type"] == "direct":
+                conv["name"] = self.resolve_name(conv["id"])
+        return convs
+
+    async def clear_local_store(self) -> int:
+        """Delete all locally stored messages. Returns count deleted."""
+        return await asyncio.to_thread(_store.clear_store)
+
+    async def delete_local_messages(self, recipient: str) -> int:
+        """Delete locally stored messages for one contact or group. Returns count deleted."""
+        return await asyncio.to_thread(_store.delete_conversation_messages, recipient)
 
     async def get_unread_messages(self, limit: int = 50) -> list[Message]:
         return await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)

@@ -13,6 +13,9 @@ def temp_db(tmp_path, monkeypatch):
     """Redirect DB to a temp file and reset init flag for each test."""
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "test_messages.db")
     monkeypatch.setattr(store, "_initialized", False)
+    if getattr(store._thread_local, "conn", None) is not None:
+        store._thread_local.conn.close()
+        store._thread_local.conn = None
 
 
 def make_msg(id="1", sender="+1", body="hello", group_id=None, recipient=None,
@@ -275,6 +278,9 @@ def test_migration_adds_recipient_column(tmp_path, monkeypatch):
     db_path = tmp_path / "old.db"
     monkeypatch.setattr(store, "DB_PATH", db_path)
     monkeypatch.setattr(store, "_initialized", False)
+    if getattr(store._thread_local, "conn", None) is not None:
+        store._thread_local.conn.close()
+        store._thread_local.conn = None
 
     # Create old-style schema without recipient column
     conn = sqlite3.connect(str(db_path))
@@ -288,6 +294,9 @@ def test_migration_adds_recipient_column(tmp_path, monkeypatch):
 
     # init_db should run migration without error
     monkeypatch.setattr(store, "_initialized", False)
+    if getattr(store._thread_local, "conn", None) is not None:
+        store._thread_local.conn.close()
+        store._thread_local.conn = None
     store.init_db()
 
     # Old data still readable
