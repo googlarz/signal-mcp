@@ -67,7 +67,8 @@ def send_group(group_id: str, message: str):
 @cli.command()
 @click.option("--watch", is_flag=True, help="Keep watching for new messages")
 @click.option("--timeout", default=5, show_default=True, help="Seconds to wait per poll")
-def receive(watch: bool, timeout: int):
+@click.option("--interval", default=2, show_default=True, help="Poll interval for --watch mode (seconds)")
+def receive(watch: bool, timeout: int, interval: int):
     """Receive incoming messages."""
     async def _run():
         async with SignalClient() as client:
@@ -80,10 +81,8 @@ def receive(watch: bool, timeout: int):
                     _print_message(msg)
             else:
                 click.echo("Watching for messages (Ctrl+C to stop)…")
-                while True:
-                    messages = await client.receive_messages(timeout=timeout)
-                    for msg in messages:
-                        _print_message(msg)
+                async for msg in client.receive_stream(poll_interval=interval):
+                    _print_message(msg)
     try:
         run(_run())
     except KeyboardInterrupt:

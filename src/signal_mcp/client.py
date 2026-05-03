@@ -664,6 +664,58 @@ class SignalClient:
     def get_own_number(self) -> str:
         return self.account
 
+    # ── Configuration ─────────────────────────────────────────────────────────
+
+    async def get_configuration(self) -> dict:
+        """Return current Signal account configuration flags."""
+        result = await self._rpc("getConfiguration")
+        return result if isinstance(result, dict) else {}
+
+    async def update_configuration(
+        self,
+        read_receipts: bool | None = None,
+        typing_indicators: bool | None = None,
+        link_previews: bool | None = None,
+        unidentified_delivery_indicators: bool | None = None,
+    ) -> None:
+        """Toggle account-level configuration flags."""
+        params: dict = {}
+        if read_receipts is not None:
+            params["readReceipts"] = read_receipts
+        if typing_indicators is not None:
+            params["typingIndicators"] = typing_indicators
+        if link_previews is not None:
+            params["linkPreviews"] = link_previews
+        if unidentified_delivery_indicators is not None:
+            params["unidentifiedDeliveryIndicators"] = unidentified_delivery_indicators
+        if params:
+            await self._rpc("updateConfiguration", params)
+
+    # ── Sticker packs ─────────────────────────────────────────────────────────
+
+    async def list_sticker_packs(self) -> list[dict]:
+        """List all installed sticker packs."""
+        result = await self._rpc("listStickerPacks")
+        return result if isinstance(result, list) else []
+
+    async def add_sticker_pack(self, uri: str) -> None:
+        """Install a sticker pack from a signal.art URL."""
+        await self._rpc("addStickerPack", {"uri": uri})
+
+    # ── Streaming receive ─────────────────────────────────────────────────────
+
+    async def receive_stream(self, poll_interval: int = 2):
+        """Async generator: yield messages continuously, polling every poll_interval seconds."""
+        while True:
+            try:
+                msgs = await self.receive_messages(timeout=poll_interval)
+                for msg in msgs:
+                    yield msg
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                await asyncio.sleep(poll_interval)
+
     # ── Message actions ───────────────────────────────────────────────────────
 
     async def delete_message(self, recipient: str, target_timestamp: int) -> None:

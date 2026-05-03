@@ -22,6 +22,8 @@ _DAEMON_FREE = {
     "get_conversation", "search_messages", "get_unread", "get_own_number",
     "list_attachments", "get_attachment",
 }
+# Note: get_configuration, update_configuration, list_sticker_packs, add_sticker_pack
+# all require the daemon (they call signal-cli JSON-RPC)
 
 
 def get_client() -> SignalClient:
@@ -37,6 +39,14 @@ def _ok(data) -> list[TextContent]:
 
 def _err(msg: str) -> list[TextContent]:
     return [TextContent(type="text", text=f"Error: {msg}")]
+
+
+def _require(arguments: dict, *keys: str) -> str | None:
+    """Return an error string if any required key is missing, else None."""
+    missing = [k for k in keys if k not in arguments]
+    if missing:
+        return f"Missing required parameter(s): {', '.join(missing)}"
+    return None
 
 
 # ── Tool definitions ───────────────────────────────────────────────────────────
@@ -337,7 +347,7 @@ TOOLS = [
     ),
     Tool(
         name="import_desktop",
-        description="Import all historical messages from Signal Desktop app (macOS). Requires sqlcipher and Keychain access.",
+        description="Import all historical messages from Signal Desktop (macOS/Linux). Requires sqlcipher. On macOS prompts for Keychain access; on Linux uses libsecret/GNOME Keyring.",
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -462,6 +472,40 @@ TOOLS = [
 
 TOOLS += [
     Tool(
+        name="get_configuration",
+        description="Get current Signal account configuration (read receipts, typing indicators, link previews)",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="update_configuration",
+        description="Toggle Signal account settings: read receipts, typing indicators, link previews",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "read_receipts": {"type": "boolean", "description": "Enable/disable sending read receipts"},
+                "typing_indicators": {"type": "boolean", "description": "Enable/disable sending typing indicators"},
+                "link_previews": {"type": "boolean", "description": "Enable/disable link previews in messages"},
+                "unidentified_delivery_indicators": {"type": "boolean", "description": "Show/hide sealed sender indicators"},
+            },
+        },
+    ),
+    Tool(
+        name="list_sticker_packs",
+        description="List all installed Signal sticker packs (shows pack_id and sticker_id values for send_sticker)",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="add_sticker_pack",
+        description="Install a sticker pack from a signal.art URL",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "uri": {"type": "string", "description": "Sticker pack URL (https://signal.art/addstickers/#pack_id=...&pack_key=...)"},
+            },
+            "required": ["uri"],
+        },
+    ),
+    Tool(
         name="send_sticker",
         description="Send a sticker to a Signal contact",
         inputSchema={
@@ -518,6 +562,44 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         if name not in _DAEMON_FREE:
             await client.ensure_daemon()
+
+        # Validate required parameters up front (gives clean error instead of KeyError)
+        _REQUIRED: dict[str, list[str]] = {
+            "send_message":         ["recipient", "message"],
+            "send_group_message":   ["group_id", "message"],
+            "send_note_to_self":    ["message"],
+            "send_attachment":      ["recipient", "path"],
+            "send_group_attachment":["group_id", "path"],
+            "send_sticker":         ["recipient", "pack_id", "sticker_id"],
+            "send_group_sticker":   ["group_id", "pack_id", "sticker_id"],
+            "get_conversation":     ["recipient"],
+            "search_messages":      ["query"],
+            "react_to_message":     ["target_author", "target_timestamp", "emoji"],
+            "set_typing":           ["recipient"],
+            "get_profile":          ["number"],
+            "block_contact":        ["number"],
+            "unblock_contact":      ["number"],
+            "remove_contact":       ["number"],
+            "update_contact":       ["number", "name"],
+            "create_group":         ["name", "members"],
+            "join_group":           ["uri"],
+            "add_device":           ["uri"],
+            "remove_device":        ["device_id"],
+            "delete_message":       ["recipient", "target_timestamp"],
+            "delete_group_message": ["group_id", "target_timestamp"],
+            "send_read_receipt":    ["sender", "timestamps"],
+            "update_group":         ["group_id"],
+            "leave_group":          ["group_id"],
+            "set_expiration_timer": ["expiration_seconds"],
+            "trust_identity":       ["number"],
+            "get_attachment":       ["filename"],
+            "add_sticker_pack":     ["uri"],
+            "edit_message":         ["target_timestamp", "message"],
+        }
+        if name in _REQUIRED:
+            err = _require(arguments, *_REQUIRED[name])
+            if err:
+                return _err(err)
 
         if name == "send_message":
             result = await client.send_message(
@@ -756,6 +838,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 safety_number=arguments.get("safety_number"),
             )
             return _ok({"status": "trusted", "number": arguments["number"]})
+
+        elif name == "get_configuration":
+            return _ok(await client.get_configuration())
+
+        elif name == "update_configuration":
+            await client.update_configuration(
+                read_receipts=arguments.get("read_receipts"),
+                typing_indicators=arguments.get("typing_indicators"),
+                link_previews=arguments.get("link_previews"),
+                unidentified_delivery_indicators=arguments.get("unidentified_delivery_indicators"),
+            )
+            return _ok({"status": "updated"})
+
+        elif name == "list_sticker_packs":
+            return _ok(await client.list_sticker_packs())
+
+        elif name == "add_sticker_pack":
+            await client.add_sticker_pack(arguments["uri"])
+            return _ok({"status": "installed"})
 
         else:
             return _err(f"Unknown tool: {name}")

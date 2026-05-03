@@ -530,3 +530,69 @@ async def test_get_conversation_enriches_sender_name(monkeypatch):
     result = await call_tool("get_conversation", {"recipient": "+19999999999"})
     msgs = json.loads(result[0].text)
     assert msgs[0]["sender_name"] == "Alice"
+
+
+# ── Input validation ───────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_missing_required_param_returns_error():
+    """Missing required params should return a clean error, not a KeyError."""
+    result = await call_tool("send_message", {"recipient": "+19999999999"})  # missing "message"
+    assert "Missing required parameter" in result[0].text
+    assert "message" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_missing_multiple_required_params():
+    result = await call_tool("send_message", {})
+    assert "recipient" in result[0].text
+    assert "message" in result[0].text
+
+
+# ── Configuration tools ────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_get_configuration():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({
+        "readReceipts": True, "typingIndicators": False,
+    })))
+    result = await call_tool("get_configuration", {})
+    data = json.loads(result[0].text)
+    assert data["readReceipts"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_update_configuration():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("update_configuration", {"read_receipts": False})
+    data = json.loads(result[0].text)
+    assert data["status"] == "updated"
+
+
+# ── Sticker pack tools ─────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_list_sticker_packs():
+    packs = [{"packId": "abc", "title": "Fun"}]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(packs)))
+    result = await call_tool("list_sticker_packs", {})
+    data = json.loads(result[0].text)
+    assert data[0]["packId"] == "abc"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_add_sticker_pack():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("add_sticker_pack", {"uri": "https://signal.art/addstickers/#pack_id=abc&pack_key=xyz"})
+    data = json.loads(result[0].text)
+    assert data["status"] == "installed"
+
+
+@pytest.mark.asyncio
+async def test_tool_add_sticker_pack_missing_uri():
+    result = await call_tool("add_sticker_pack", {})
+    assert "Missing required parameter" in result[0].text

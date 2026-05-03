@@ -4,15 +4,22 @@ Reads ALL historical messages from Signal Desktop's local SQLCipher database
 and imports them into the signal-mcp store.
 
 Signal Desktop stores:
-  DB:  ~/Library/Application Support/Signal/sql/db.sqlite  (SQLCipher 4)
-  Key: ~/Library/Application Support/Signal/config.json    (encryptedKey, Chromium v10)
+  macOS:   ~/Library/Application Support/Signal/
+  Linux:   ~/.config/Signal/
+  Windows: %APPDATA%/Signal/
 
-The encryptedKey is AES-128-CBC encrypted with a password stored in the
-macOS Keychain under service "Signal Safe Storage".
+  DB:  <dir>/sql/db.sqlite  (SQLCipher 4)
+  Key: <dir>/config.json    (encryptedKey, Chromium v10)
+
+The encryptedKey is AES-128-CBC encrypted with a password from the OS keychain:
+  macOS:   Keychain service "Signal Safe Storage"
+  Linux:   libsecret / GNOME Keyring ("Signal Safe Storage"), fallback "peanuts"
+  Windows: DPAPI (not yet supported — use manual key)
 """
 
 import json
 import os
+import platform
 import subprocess
 import sqlite3
 import tempfile
@@ -27,7 +34,22 @@ from .models import Attachment, Message
 from .config import detect_account
 from . import store as _store
 
-SIGNAL_DIR = Path.home() / "Library" / "Application Support" / "Signal"
+
+def _signal_dir() -> Path:
+    """Return the Signal Desktop data directory for the current platform."""
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "Signal"
+    elif system == "Linux":
+        return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "Signal"
+    elif system == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        return Path(appdata) / "Signal"
+    # Fallback
+    return Path.home() / ".config" / "Signal"
+
+
+SIGNAL_DIR = _signal_dir()
 SIGNAL_DB = SIGNAL_DIR / "sql" / "db.sqlite"
 SIGNAL_CONFIG = SIGNAL_DIR / "config.json"
 
@@ -37,18 +59,51 @@ class DesktopImportError(Exception):
 
 
 def _get_keychain_password() -> bytes:
-    """Retrieve the Signal Safe Storage password from macOS Keychain."""
-    for service in ("Signal Safe Storage", "Signal Keys", "Electron Keys"):
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-w"],
-            capture_output=True, text=True, timeout=30,
+    """Retrieve the Signal Safe Storage password from the OS keychain."""
+    system = platform.system()
+
+    if system == "Darwin":
+        for service in ("Signal Safe Storage", "Signal Keys", "Electron Keys"):
+            result = subprocess.run(
+                ["security", "find-generic-password", "-s", service, "-w"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip().encode()
+        raise DesktopImportError(
+            "Could not find Signal password in macOS Keychain.\n"
+            "macOS may have shown an access dialog — click 'Allow' and try again."
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().encode()
-    raise DesktopImportError(
-        "Could not find Signal password in macOS Keychain.\n"
-        "macOS may have shown an access dialog — click 'Allow' and try again."
-    )
+
+    elif system == "Linux":
+        # Try secret-tool (GNOME Keyring / libsecret)
+        for label in ("Signal Safe Storage", "Electron Safe Storage"):
+            try:
+                result = subprocess.run(
+                    ["secret-tool", "lookup", "application", "Signal"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip().encode()
+            except FileNotFoundError:
+                pass
+            try:
+                result = subprocess.run(
+                    ["secret-tool", "lookup", "label", label],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip().encode()
+            except FileNotFoundError:
+                break
+        # Signal Desktop on Linux falls back to hardcoded password when no keyring is available
+        return b"peanuts"
+
+    else:
+        raise DesktopImportError(
+            f"Platform '{system}' is not supported for automatic keychain access.\n"
+            "Use signal-mcp import-desktop --key <hex-key> to provide the DB key manually."
+        )
 
 
 def _decrypt_key(encrypted_hex: str, password: bytes) -> str:
@@ -81,9 +136,10 @@ def _decrypt_key(encrypted_hex: str, password: bytes) -> str:
     return db_key_bytes.hex()
 
 
-def _decrypt_db_to_temp(db_key_hex: str) -> Path:
+def _decrypt_db_to_temp(db_key_hex: str, db_path: Path | None = None) -> Path:
     """Use sqlcipher CLI to export the encrypted DB to a plain SQLite file."""
     sqlcipher = _find_sqlcipher()
+    source = db_path or SIGNAL_DB
     fd, tmp_str = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     tmp = Path(tmp_str)
@@ -101,7 +157,7 @@ def _decrypt_db_to_temp(db_key_hex: str) -> Path:
     )
 
     result = subprocess.run(
-        [sqlcipher, str(SIGNAL_DB)],
+        [sqlcipher, str(source)],
         input=script, capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
@@ -185,18 +241,33 @@ def _decode_group_id(raw: str | None) -> str | None:
     return raw
 
 
-def import_from_desktop(progress_cb=None) -> dict:
+def import_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dict:
     """
     Full import pipeline: decrypt DB → parse → store.
-    Returns {"imported": N, "skipped": N, "total": N}.
+    Returns {"imported": N, "skipped": N, "total": N, "platform": str, "source": str}.
+
+    signal_dir: override the auto-detected Signal Desktop directory.
     """
-    if not SIGNAL_DB.exists():
-        raise DesktopImportError(f"Signal Desktop DB not found at {SIGNAL_DB}")
-    if not SIGNAL_CONFIG.exists():
-        raise DesktopImportError(f"Signal Desktop config not found at {SIGNAL_CONFIG}")
+    if signal_dir is not None:
+        # Explicit override — construct paths from it
+        db_path = signal_dir / "sql" / "db.sqlite"
+        config_path = signal_dir / "config.json"
+    else:
+        # Use module-level constants (patchable in tests, reflect current platform)
+        db_path = SIGNAL_DB
+        config_path = SIGNAL_CONFIG
+
+    if not db_path.exists():
+        raise DesktopImportError(
+            f"Signal Desktop DB not found at {db_path}\n"
+            f"Platform: {platform.system()}  Expected dir: {db_path.parent.parent}\n"
+            "Make sure Signal Desktop is installed and has been opened at least once."
+        )
+    if not config_path.exists():
+        raise DesktopImportError(f"Signal Desktop config not found at {config_path}")
 
     # 1. Read encrypted key from config
-    config = json.loads(SIGNAL_CONFIG.read_text())
+    config = json.loads(config_path.read_text())
     encrypted_key_hex = config.get("encryptedKey")
     if not encrypted_key_hex:
         raise DesktopImportError("No encryptedKey in Signal Desktop config.json")
@@ -214,7 +285,7 @@ def import_from_desktop(progress_cb=None) -> dict:
     # 3. Export encrypted DB to plain SQLite temp file
     plain_db = None
     try:
-        plain_db = _decrypt_db_to_temp(db_key_hex)
+        plain_db = _decrypt_db_to_temp(db_key_hex, db_path)
 
         if progress_cb:
             progress_cb("Importing messages…")
@@ -237,7 +308,13 @@ def import_from_desktop(progress_cb=None) -> dict:
             if progress_cb and i % 500 == 0:
                 progress_cb(f"  {i}/{total} messages…")
 
-        return {"imported": imported, "skipped": skipped, "total": total}
+        return {
+            "imported": imported,
+            "skipped": skipped,
+            "total": total,
+            "platform": platform.system(),
+            "source": str(db_path.parent.parent),
+        }
     finally:
         if plain_db is not None:
             plain_db.unlink(missing_ok=True)

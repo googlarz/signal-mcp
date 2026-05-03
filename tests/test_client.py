@@ -799,3 +799,95 @@ def test_check_signal_cli_version_not_found(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(RuntimeError, match="not found"):
         _config_mod.check_signal_cli_version()
+
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_configuration(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({
+        "readReceipts": True, "typingIndicators": True, "linkPreviews": False,
+    })))
+    result = await client.get_configuration()
+    assert result["readReceipts"] is True
+    assert result["linkPreviews"] is False
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_configuration(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_configuration(read_receipts=False, typing_indicators=True)
+    body = respx.calls[0].request.content
+    import json as _json
+    params = _json.loads(body)["params"]
+    assert params["readReceipts"] is False
+    assert params["typingIndicators"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_configuration_no_params(client):
+    """update_configuration with no args should not make any RPC call."""
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_configuration()
+    assert len(respx.calls) == 0
+
+
+# ── Sticker packs ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_sticker_packs(client):
+    packs = [{"packId": "abc123", "title": "Cool Stickers", "stickers": []}]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(packs)))
+    result = await client.list_sticker_packs()
+    assert len(result) == 1
+    assert result[0]["packId"] == "abc123"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_add_sticker_pack(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.add_sticker_pack("https://signal.art/addstickers/#pack_id=abc&pack_key=def")
+    import json as _json
+    params = _json.loads(respx.calls[0].request.content)["params"]
+    assert "signal.art" in params["uri"]
+
+
+# ── Streaming receive ─────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_receive_stream_yields_messages(client):
+    """receive_stream should yield messages from repeated polls."""
+    import asyncio as _asyncio
+    call_count = 0
+
+    def side_effect(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(200, json=rpc_ok([{
+                "envelope": {
+                    "source": "+19999999999",
+                    "timestamp": 111000,
+                    "dataMessage": {"message": "hello", "timestamp": 111000, "attachments": []},
+                },
+            }]))
+        # After first call, raise CancelledError to end the stream
+        raise _asyncio.CancelledError()
+
+    respx.post(DAEMON_URL).mock(side_effect=side_effect)
+
+    received = []
+    try:
+        async for msg in client.receive_stream(poll_interval=1):
+            received.append(msg)
+    except _asyncio.CancelledError:
+        pass
+
+    assert len(received) >= 1
+    assert received[0].body == "hello"

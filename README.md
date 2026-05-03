@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **42 MCP tools** — complete coverage of everything signal-cli exposes
+- **46 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -179,6 +179,20 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `send_sticker` | Send a sticker to a contact. |
 | `send_group_sticker` | Send a sticker to a group. |
 
+### Configuration
+
+| Tool | Description |
+|---|---|
+| `get_configuration` | Read current account settings (read receipts, typing indicators, link previews). |
+| `update_configuration` | Toggle read receipts, typing indicators, link previews, or sealed sender indicators. |
+
+### Sticker Packs
+
+| Tool | Description |
+|---|---|
+| `list_sticker_packs` | List all installed sticker packs with `pack_id` and sticker IDs for `send_sticker`. |
+| `add_sticker_pack` | Install a sticker pack from a `signal.art` URL. |
+
 ### Contacts
 
 | Tool | Description |
@@ -231,7 +245,7 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 
 | Tool | Description |
 |---|---|
-| `import_desktop` | Import full message history from Signal Desktop (macOS). Requires sqlcipher. |
+| `import_desktop` | Import full message history from Signal Desktop (macOS/Linux). Requires sqlcipher. |
 | `list_attachments` | List all locally downloaded attachments (photos, files received via Signal). |
 | `get_attachment` | Get details about a specific downloaded attachment by filename. |
 

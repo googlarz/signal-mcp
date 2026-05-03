@@ -2,6 +2,34 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.5.0] — 2026-05-03
+
+### New tools (4)
+- `get_configuration` — read current account settings (read receipts, typing indicators, link previews)
+- `update_configuration` — toggle account settings
+- `list_sticker_packs` — list all installed sticker packs with pack_id/sticker_id values needed by `send_sticker`
+- `add_sticker_pack` — install a sticker pack from a `signal.art` URL
+
+### Input validation
+- All tool handlers now validate required parameters up front; missing params return a clean `"Missing required parameter(s): ..."` error instead of a bare `KeyError`
+
+### Cross-platform Signal Desktop import
+- `import-desktop` now works on **Linux** as well as macOS
+  - Linux path: `~/.config/Signal/` (respects `$XDG_CONFIG_HOME`)
+  - Linux keychain: tries `secret-tool` (GNOME Keyring / libsecret), falls back to `"peanuts"` (Signal Desktop's hardcoded fallback password)
+  - `import_from_desktop()` accepts a `signal_dir` override for custom install paths
+  - Result dict now includes `"platform"` and `"source"` fields
+
+### Streaming receive
+- New `SignalClient.receive_stream(poll_interval)` async generator — yields messages continuously, handles errors with back-off; used by `receive --watch`
+- CLI `receive --watch` now uses `receive_stream` with a configurable `--interval` option (default 2 s)
+
+### Stats
+- 46 MCP tools total
+- 174 tests
+
+---
+
 ## [1.4.1] — 2026-05-03
 
 ### Performance
