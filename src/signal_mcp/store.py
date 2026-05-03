@@ -25,6 +25,9 @@ def _connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-16000")   # 16 MB page cache
+    conn.execute("PRAGMA temp_store=memory")
+    conn.execute("PRAGMA mmap_size=134217728")  # 128 MB memory-mapped I/O
     _thread_local.conn = conn
     # Restrict permissions to owner-only on first creation
     try:
@@ -150,7 +153,7 @@ def get_conversation(
                ORDER BY timestamp DESC LIMIT ? OFFSET ?""",
             params,
         ).fetchall()
-        return [_row_to_message(conn, r) for r in reversed(rows)]
+        return _rows_to_messages(conn, list(reversed(rows)))
 
 
 def _safe_fts_query(query: str) -> str:
@@ -173,7 +176,7 @@ def search_messages(
         try:
             rows = conn.execute(
                 f"""SELECT m.* FROM messages m
-                   JOIN messages_fts f ON m.id = f.id
+                   JOIN messages_fts f ON m.rowid = f.rowid
                    WHERE messages_fts MATCH ?
                    {sender_clause}
                    ORDER BY m.timestamp DESC LIMIT ?""",
@@ -184,7 +187,7 @@ def search_messages(
                 f"SELECT * FROM messages WHERE body LIKE ? {sender_clause} ORDER BY timestamp DESC LIMIT ?",
                 [f"%{query}%"] + sender_args + [limit],
             ).fetchall()
-        return [_row_to_message(conn, r) for r in rows]
+        return _rows_to_messages(conn, rows)
 
 
 def get_unread_messages(own_number: str = "", limit: int = 50) -> list[Message]:
@@ -197,7 +200,7 @@ def get_unread_messages(own_number: str = "", limit: int = 50) -> list[Message]:
                ORDER BY timestamp DESC LIMIT ?""",
             (own_number, limit),
         ).fetchall()
-        return [_row_to_message(conn, r) for r in reversed(rows)]
+        return _rows_to_messages(conn, list(reversed(rows)))
 
 
 def update_message_body(target_timestamp_ms: int, new_body: str) -> None:
@@ -357,7 +360,7 @@ def export_messages(
             f"SELECT * FROM messages {where} ORDER BY timestamp ASC",
             params,
         ).fetchall()
-        messages = [_row_to_message(conn, r) for r in rows]
+        messages = _rows_to_messages(conn, rows)
 
     if fmt == "csv":
         buf = io.StringIO()
@@ -412,27 +415,44 @@ def get_stats() -> dict:
     }
 
 
-def _row_to_message(conn: sqlite3.Connection, row: sqlite3.Row) -> Message:
+def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[Message]:
+    """Convert a batch of message rows to Message objects in 2 queries (not N+1)."""
+    if not rows:
+        return []
+    ids = [r["id"] for r in rows]
+    ph = ",".join("?" * len(ids))
     att_rows = conn.execute(
-        "SELECT * FROM attachments WHERE message_id = ?", (row["id"],)
+        f"SELECT * FROM attachments WHERE message_id IN ({ph})", ids
     ).fetchall()
-    cols = row.keys()
-    return Message(
-        id=row["id"],
-        sender=row["sender"],
-        recipient=row["recipient"] if "recipient" in cols else None,
-        body=row["body"],
-        timestamp=datetime.fromtimestamp(row["timestamp"] / 1000),
-        group_id=row["group_id"],
-        quote_id=row["quote_id"],
-        is_read=bool(row["is_read"]),
-        attachments=[
+    # Group attachments by message_id
+    att_map: dict[str, list[Attachment]] = {}
+    for a in att_rows:
+        att_map.setdefault(a["message_id"], []).append(
             Attachment(
                 content_type=a["content_type"],
                 filename=a["filename"],
                 local_path=a["local_path"],
                 size=a["size"],
             )
-            for a in att_rows
-        ],
-    )
+        )
+    cols = rows[0].keys()
+    has_recipient = "recipient" in cols
+    return [
+        Message(
+            id=r["id"],
+            sender=r["sender"],
+            recipient=r["recipient"] if has_recipient else None,
+            body=r["body"],
+            timestamp=datetime.fromtimestamp(r["timestamp"] / 1000),
+            group_id=r["group_id"],
+            quote_id=r["quote_id"],
+            is_read=bool(r["is_read"]),
+            attachments=att_map.get(r["id"], []),
+        )
+        for r in rows
+    ]
+
+
+def _row_to_message(conn: sqlite3.Connection, row: sqlite3.Row) -> Message:
+    """Single-row convenience wrapper — uses batch loader internally."""
+    return _rows_to_messages(conn, [row])[0]
