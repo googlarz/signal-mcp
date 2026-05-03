@@ -1,5 +1,6 @@
 """Tests for SignalClient using mocked signal-cli daemon."""
 
+import json
 import pytest
 import respx
 import httpx
@@ -1042,3 +1043,165 @@ async def test_get_user_status(client):
 async def test_send_sync_request(client):
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     await client.send_sync_request()  # should not raise
+
+
+# ── _parse_envelope: syncMessage ──────────────────────────────────────────────
+
+def test_parse_envelope_sync_sent_dm(client):
+    """syncMessage.sentMessage for a DM is stored as outgoing message."""
+    envelope = {
+        "envelope": {
+            "source": "+19999999999",
+            "timestamp": 1717200000000,
+            "syncMessage": {
+                "sentMessage": {
+                    "destination": "+15555555555",
+                    "timestamp": 1717200000000,
+                    "message": "I sent this from another device",
+                    "attachments": [],
+                }
+            }
+        }
+    }
+    msg = client._parse_envelope(envelope)
+    assert msg is not None
+    assert msg.body == "I sent this from another device"
+    assert msg.recipient == "+15555555555"
+    assert msg.is_read is True  # outgoing = already read
+
+
+def test_parse_envelope_sync_other_skipped(client):
+    """syncMessage without sentMessage (e.g. read sync) is skipped."""
+    envelope = {
+        "envelope": {
+            "source": "+19999999999",
+            "timestamp": 1717200000000,
+            "syncMessage": {"readMessages": [{"timestamp": 123}]}
+        }
+    }
+    msg = client._parse_envelope(envelope)
+    assert msg is None
+
+
+def test_parse_envelope_typing_skipped(client):
+    """typingMessage envelopes return None — no crash."""
+    envelope = {
+        "envelope": {
+            "source": "+19999999999",
+            "timestamp": 1717200000000,
+            "typingMessage": {"action": "STARTED", "timestamp": 1717200000000},
+        }
+    }
+    msg = client._parse_envelope(envelope)
+    assert msg is None
+
+
+def test_parse_envelope_call_skipped(client):
+    """callMessage envelopes return None — no crash."""
+    envelope = {
+        "envelope": {
+            "source": "+19999999999",
+            "timestamp": 1717200000000,
+            "callMessage": {"offerMessage": {"id": 1}},
+        }
+    }
+    msg = client._parse_envelope(envelope)
+    assert msg is None
+
+
+# ── list_contacts search filter ───────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_contacts_search_filter(client):
+    contacts_payload = [
+        {"number": "+11111111111", "name": "Alice"},
+        {"number": "+12222222222", "name": "Bob"},
+        {"number": "+13333333333", "name": "Alice Smith"},
+    ]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(contacts_payload)))
+    result = await client.list_contacts(search="alice")
+    assert len(result) == 2
+    assert all("alice" in (c.name or "").lower() for c in result)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_contacts_no_filter_returns_all(client):
+    contacts_payload = [{"number": "+1", "name": "X"}, {"number": "+2", "name": "Y"}]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(contacts_payload)))
+    result = await client.list_contacts()
+    assert len(result) == 2
+
+
+# ── react_to_message remove ───────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_react_to_message_remove(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.react_to_message("+1", 123, "👍", recipient="+2", remove=True)
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["remove"] is True
+
+
+# ── pin / unpin message ───────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_pin_message_group(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.pin_message("+1", 123, group_id="grp==")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendPinMessage"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_unpin_message_dm(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.unpin_message("+1", 123, recipient="+2")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendUnpinMessage"
+
+
+@pytest.mark.asyncio
+async def test_pin_message_missing_conversation(client):
+    from signal_mcp.client import SignalError
+    with pytest.raises(SignalError):
+        await client.pin_message("+1", 123)
+
+
+# ── admin_delete_message ──────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_admin_delete_message(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.admin_delete_message("+1", 123, "grp==")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendAdminDelete"
+    assert req_body["params"]["groupId"] == "grp=="
+
+
+# ── send_contacts_sync ────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_contacts_sync(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.send_contacts_sync()
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendContacts"
+
+
+# ── update_device ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_device(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_device(2, "My Mac")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "updateDevice"
+    assert req_body["params"]["name"] == "My Mac"

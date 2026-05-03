@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **52 MCP tools** — complete coverage of everything signal-cli exposes
+- **55 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -173,7 +173,10 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `edit_message` | Edit a previously sent message (DM or group). Updates local store. |
 | `delete_message` | Remote-delete (unsend) a sent DM. |
 | `delete_group_message` | Remote-delete a sent group message. |
-| `react_to_message` | React to a message with an emoji (DM or group). |
+| `react_to_message` | React to a message with an emoji (DM or group). Set `remove=true` to unreact. |
+| `pin_message` | Pin a message in a DM or group conversation. |
+| `unpin_message` | Unpin a message in a DM or group conversation. |
+| `admin_delete_message` | Group admin: delete any message in a group you administer. |
 | `set_typing` | Send a typing indicator to a contact. |
 | `send_read_receipt` | Mark messages as read. Also updates local store. |
 | `send_sticker` | Send a sticker to a contact. |
@@ -197,7 +200,7 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 
 | Tool | Description |
 |---|---|
-| `list_contacts` | All contacts with names and numbers. |
+| `list_contacts` | All contacts with names and numbers. Supports optional `search` filter. |
 | `get_profile` | Get profile info for a contact. |
 | `update_contact` | Set a local display name for a contact. |
 | `block_contact` | Block a contact. |
@@ -222,10 +225,11 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 |---|---|
 | `list_conversations` | All conversations ordered by most recent message. |
 | `get_conversation` | Message history with a contact or group. Supports `since`, `limit`, and `offset` for pagination. |
-| `search_messages` | Full-text search (FTS5) across all stored messages. Supports `sender` and `limit`. |
+| `search_messages` | Full-text search (FTS5) across all stored messages. Supports `sender`, `limit`, and `offset`. |
 | `store_stats` | Total message count, oldest and newest message dates. |
 | `get_user_status` | Check whether phone numbers are registered Signal users. |
 | `send_sync_request` | Request sync of messages/contacts/groups from your primary device. |
+| `send_contacts_sync` | Push your contacts list to all linked devices. |
 
 ### Security & Devices
 
@@ -236,6 +240,7 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `list_devices` | List all devices linked to your account. |
 | `add_device` | Link a new device using a device link URI. |
 | `remove_device` | Unlink a device by ID. |
+| `update_device` | Rename a linked device. |
 
 ### Disappearing Messages
 

@@ -845,3 +845,128 @@ async def test_tool_send_sync_request():
     result = await call_tool("send_sync_request", {})
     data = json.loads(result[0].text)
     assert data["status"] == "sync requested"
+
+
+# ── list_contacts search filter ───────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_list_contacts_search():
+    contacts_result = [
+        {"number": "+11111111111", "name": "Alice"},
+        {"number": "+12222222222", "name": "Bob"},
+    ]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(contacts_result)))
+    result = await call_tool("list_contacts", {"search": "alice"})
+    data = json.loads(result[0].text)
+    assert len(data) == 1
+    assert data[0]["number"] == "+11111111111"
+
+
+# ── search_messages offset ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tool_search_messages_offset():
+    import signal_mcp.store as _store_mod
+    from signal_mcp.models import Message
+    from datetime import datetime
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="s1", sender="+1", body="keyword first",
+                                    timestamp=datetime(2024, 6, 1, 12, 0, 0)))
+    _store_mod.save_message(Message(id="s2", sender="+1", body="keyword second",
+                                    timestamp=datetime(2024, 6, 1, 11, 0, 0)))
+    result = await call_tool("search_messages", {"query": "keyword", "limit": 10, "offset": 1})
+    data = json.loads(result[0].text)
+    assert len(data) == 1
+
+
+# ── react_to_message remove ───────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_react_remove():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("react_to_message", {
+        "target_author": "+1", "target_timestamp": 123, "emoji": "👍",
+        "recipient": "+2", "remove": True,
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "reaction removed"
+
+
+# ── pin_message / unpin_message ───────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_pin_message():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("pin_message", {
+        "target_author": "+1", "target_timestamp": 123, "group_id": "grp==",
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "message pinned"
+
+
+@pytest.mark.asyncio
+async def test_tool_pin_message_missing_conversation():
+    result = await call_tool("pin_message", {"target_author": "+1", "target_timestamp": 123})
+    assert "Error" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_unpin_message():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("unpin_message", {
+        "target_author": "+1", "target_timestamp": 123, "recipient": "+2",
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "message unpinned"
+
+
+# ── admin_delete_message ──────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_admin_delete_message():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("admin_delete_message", {
+        "group_id": "grp==", "target_author": "+1", "target_timestamp": 123,
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "message deleted by admin"
+
+
+@pytest.mark.asyncio
+async def test_tool_admin_delete_missing_param():
+    result = await call_tool("admin_delete_message", {"group_id": "grp=="})
+    assert "Error" in result[0].text
+
+
+# ── send_contacts_sync ────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_contacts_sync():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("send_contacts_sync", {})
+    data = json.loads(result[0].text)
+    assert "synced" in data["status"]
+
+
+# ── update_device ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_update_device():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("update_device", {"device_id": 2, "name": "My Mac"})
+    data = json.loads(result[0].text)
+    assert data["status"] == "device updated"
+    assert data["name"] == "My Mac"
+
+
+@pytest.mark.asyncio
+async def test_tool_update_device_missing_param():
+    result = await call_tool("update_device", {"device_id": 2})
+    assert "Error" in result[0].text

@@ -166,11 +166,12 @@ def _safe_fts_query(query: str) -> str:
 
 
 def search_messages(
-    query: str, limit: int = 50, sender: str | None = None
+    query: str, limit: int = 50, offset: int = 0, sender: str | None = None
 ) -> list[Message]:
     """Full-text search across all stored messages. Falls back to LIKE on FTS error.
 
     sender: if given, restrict results to messages from this phone number.
+    offset: skip this many results (for pagination).
     """
     init_db()
     with _db() as conn:
@@ -182,13 +183,13 @@ def search_messages(
                    JOIN messages_fts f ON m.rowid = f.rowid
                    WHERE messages_fts MATCH ?
                    {sender_clause}
-                   ORDER BY m.timestamp DESC LIMIT ?""",
-                [_safe_fts_query(query)] + sender_args + [limit],
+                   ORDER BY m.timestamp DESC LIMIT ? OFFSET ?""",
+                [_safe_fts_query(query)] + sender_args + [limit, offset],
             ).fetchall()
         except Exception:
             rows = conn.execute(
-                f"SELECT * FROM messages WHERE body LIKE ? {sender_clause} ORDER BY timestamp DESC LIMIT ?",
-                [f"%{query}%"] + sender_args + [limit],
+                f"SELECT * FROM messages WHERE body LIKE ? {sender_clause} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                [f"%{query}%"] + sender_args + [limit, offset],
             ).fetchall()
         return _rows_to_messages(conn, rows)
 

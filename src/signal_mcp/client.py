@@ -441,6 +441,7 @@ class SignalClient:
         emoji: str,
         recipient: str | None = None,
         group_id: str | None = None,
+        remove: bool = False,
     ) -> None:
         if not recipient and not group_id:
             raise SignalError("Either recipient or group_id must be provided")
@@ -448,6 +449,7 @@ class SignalClient:
             "emoji": emoji,
             "targetAuthor": target_author,
             "targetTimestamp": target_timestamp,
+            "remove": remove,
         }
         if group_id:
             params["groupId"] = group_id
@@ -484,10 +486,53 @@ class SignalClient:
                 receipt_type=receipt_type,
             )
 
+        # Typing indicators and call messages — acknowledge but don't store
+        if data.get("typingMessage") or data.get("callMessage"):
+            return None
+
+        # Sync messages: sent from a linked device — store as outgoing
+        sync = data.get("syncMessage")
+        if sync:
+            sent = sync.get("sentMessage")
+            if not sent:
+                return None  # read/delivered sync — not a message we store
+            data_message = sent
+            sender = self.account  # it was sent by us
+            ts_ms = sent.get("timestamp", ts_ms)
+            recipient = sent.get("destination") or sent.get("destinationNumber")
+            attachments = self._parse_attachments(data_message)
+            quote = data_message.get("quote") or {}
+            return Message(
+                id=str(ts_ms),
+                sender=sender,
+                recipient=recipient,
+                body=data_message.get("message", "") or "",
+                timestamp=datetime.fromtimestamp(ts_ms / 1000),
+                attachments=attachments,
+                group_id=data_message.get("groupInfo", {}).get("groupId"),
+                quote_id=str(quote["id"]) if quote.get("id") else None,
+                is_read=True,  # sent by us, already "read"
+            )
+
         data_message = data.get("dataMessage")
         if not data_message:
             return None
 
+        attachments = self._parse_attachments(data_message)
+        ts_ms = data_message.get("timestamp", ts_ms)
+        quote = data_message.get("quote") or {}
+        return Message(
+            id=str(ts_ms),
+            sender=sender,
+            body=data_message.get("message", "") or "",
+            timestamp=datetime.fromtimestamp(ts_ms / 1000),
+            attachments=attachments,
+            group_id=data_message.get("groupInfo", {}).get("groupId"),
+            quote_id=str(quote["id"]) if quote.get("id") else None,
+        )
+
+    def _parse_attachments(self, data_message: dict) -> list[Attachment]:
+        """Extract and copy attachments from a dataMessage/sentMessage dict."""
         attachments = []
         for att in data_message.get("attachments", []):
             local_path = att.get("filename")
@@ -504,18 +549,7 @@ class SignalClient:
                 local_path=local_path,
                 size=att.get("size"),
             ))
-
-        ts_ms = data_message.get("timestamp", ts_ms)
-        quote = data_message.get("quote") or {}
-        return Message(
-            id=str(ts_ms),
-            sender=sender,
-            body=data_message.get("message", "") or "",
-            timestamp=datetime.fromtimestamp(ts_ms / 1000),
-            attachments=attachments,
-            group_id=data_message.get("groupInfo", {}).get("groupId"),
-            quote_id=str(quote["id"]) if quote.get("id") else None,
-        )
+        return attachments
 
     # ── Contact name resolution ───────────────────────────────────────────────
 
@@ -555,7 +589,7 @@ class SignalClient:
 
     # ── Contacts ──────────────────────────────────────────────────────────────
 
-    async def list_contacts(self) -> list[Contact]:
+    async def list_contacts(self, search: str | None = None) -> list[Contact]:
         result = await self._rpc("listContacts")
         contacts = []
         for c in result if isinstance(result, list) else []:
@@ -570,6 +604,15 @@ class SignalClient:
                 about=(profile.get("about") or c.get("about") or "").strip() or None,
                 blocked=c.get("isBlocked", False),
             ))
+        if search:
+            q = search.lower()
+            contacts = [
+                c for c in contacts
+                if q in (c.number or "").lower()
+                or q in (c.name or "").lower()
+                or q in (c.given_name or "").lower()
+                or q in (c.family_name or "").lower()
+            ]
         return contacts
 
     async def get_profile(self, number: str) -> Contact:
@@ -719,8 +762,10 @@ class SignalClient:
                     m.is_read = True
         return messages
 
-    async def search_messages(self, query: str, limit: int = 50, sender: str | None = None) -> list[Message]:
-        return await asyncio.to_thread(_store.search_messages, query, limit=limit, sender=sender)
+    async def search_messages(
+        self, query: str, limit: int = 50, offset: int = 0, sender: str | None = None
+    ) -> list[Message]:
+        return await asyncio.to_thread(_store.search_messages, query, limit=limit, offset=offset, sender=sender)
 
     async def list_conversations(self) -> list[dict]:
         convs = await asyncio.to_thread(_store.list_conversations, own_number=self.account)
@@ -881,6 +926,61 @@ class SignalClient:
 
     async def leave_group(self, group_id: str) -> None:
         await self._rpc("quitGroup", {"groupId": group_id})
+
+    async def pin_message(
+        self,
+        target_author: str,
+        target_timestamp: int,
+        recipient: str | None = None,
+        group_id: str | None = None,
+    ) -> None:
+        """Pin a message in a group or DM conversation."""
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {"targetAuthor": target_author, "targetTimestamp": target_timestamp}
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        await self._rpc("sendPinMessage", params)
+
+    async def unpin_message(
+        self,
+        target_author: str,
+        target_timestamp: int,
+        recipient: str | None = None,
+        group_id: str | None = None,
+    ) -> None:
+        """Unpin a message in a group or DM conversation."""
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {"targetAuthor": target_author, "targetTimestamp": target_timestamp}
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        await self._rpc("sendUnpinMessage", params)
+
+    async def admin_delete_message(
+        self,
+        target_author: str,
+        target_timestamp: int,
+        group_id: str,
+    ) -> None:
+        """Group admin: delete any message in a group (sendAdminDelete)."""
+        await self._rpc("sendAdminDelete", {
+            "groupId": group_id,
+            "targetAuthor": target_author,
+            "targetTimestamp": target_timestamp,
+        })
+
+    async def send_contacts_sync(self) -> None:
+        """Sync contacts list to all linked devices."""
+        await self._rpc("sendContacts")
+
+    async def update_device(self, device_id: int, name: str) -> None:
+        """Rename a linked device."""
+        await self._rpc("updateDevice", {"deviceId": device_id, "name": name})
 
     # ── Identity / safety numbers ─────────────────────────────────────────────
 

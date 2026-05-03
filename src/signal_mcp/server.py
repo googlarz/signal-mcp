@@ -131,7 +131,12 @@ TOOLS = [
     Tool(
         name="list_contacts",
         description="List all Signal contacts with names and phone numbers",
-        inputSchema={"type": "object", "properties": {}},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "search": {"type": "string", "description": "Filter contacts by name or number (case-insensitive substring)"},
+            },
+        },
     ),
     Tool(
         name="list_groups",
@@ -161,6 +166,7 @@ TOOLS = [
                 "query": {"type": "string", "description": "Keyword or phrase to search for"},
                 "sender": {"type": "string", "description": "Filter results to messages from this phone number (E.164)"},
                 "limit": {"type": "integer", "description": "Maximum results to return (default 50)"},
+                "offset": {"type": "integer", "description": "Skip this many results for pagination (default 0)", "default": 0},
             },
             "required": ["query"],
         },
@@ -195,7 +201,7 @@ TOOLS = [
     ),
     Tool(
         name="react_to_message",
-        description="React to a Signal message with an emoji (DM or group)",
+        description="React to a Signal message with an emoji (DM or group). Set remove=true to remove a reaction.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -204,6 +210,7 @@ TOOLS = [
                 "emoji": {"type": "string", "description": "Emoji to react with (e.g. '👍')"},
                 "recipient": {"type": "string", "description": "Phone number for DM reactions"},
                 "group_id": {"type": "string", "description": "Group ID for group reactions"},
+                "remove": {"type": "boolean", "description": "Remove an existing reaction (default false)", "default": False},
             },
             "required": ["target_author", "target_timestamp", "emoji"],
         },
@@ -456,6 +463,64 @@ TOOLS = [
         },
     ),
     Tool(
+        name="pin_message",
+        description="Pin a message in a DM or group conversation",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "target_author": {"type": "string", "description": "Phone number of the message author"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to pin"},
+                "recipient": {"type": "string", "description": "Phone number for DM conversations"},
+                "group_id": {"type": "string", "description": "Group ID for group conversations"},
+            },
+            "required": ["target_author", "target_timestamp"],
+        },
+    ),
+    Tool(
+        name="unpin_message",
+        description="Unpin a previously pinned message in a DM or group conversation",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "target_author": {"type": "string", "description": "Phone number of the message author"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the pinned message"},
+                "recipient": {"type": "string", "description": "Phone number for DM conversations"},
+                "group_id": {"type": "string", "description": "Group ID for group conversations"},
+            },
+            "required": ["target_author", "target_timestamp"],
+        },
+    ),
+    Tool(
+        name="admin_delete_message",
+        description="Group admin: delete any message in a group you administer",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID"},
+                "target_author": {"type": "string", "description": "Phone number of the message author"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to delete"},
+            },
+            "required": ["group_id", "target_author", "target_timestamp"],
+        },
+    ),
+    Tool(
+        name="send_contacts_sync",
+        description="Sync your contacts list to all linked devices",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="update_device",
+        description="Rename a linked device",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "device_id": {"type": "integer", "description": "Device ID from list_devices"},
+                "name": {"type": "string", "description": "New name for the device"},
+            },
+            "required": ["device_id", "name"],
+        },
+    ),
+    Tool(
         name="set_expiration_timer",
         description="Set or disable the disappearing message timer for a conversation",
         inputSchema={
@@ -655,6 +720,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "clear_local_store":    ["confirm"],
             "delete_local_messages":["recipient"],
             "get_user_status":      ["recipients"],
+            "pin_message":          ["target_author", "target_timestamp"],
+            "unpin_message":        ["target_author", "target_timestamp"],
+            "admin_delete_message": ["group_id", "target_author", "target_timestamp"],
+            "update_device":        ["device_id", "name"],
         }
         if name in _REQUIRED:
             err = _require(arguments, *_REQUIRED[name])
@@ -719,7 +788,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "list_contacts":
-            contacts = await client.list_contacts()
+            contacts = await client.list_contacts(search=arguments.get("search"))
             return _ok([c.to_dict() for c in contacts])
 
         elif name == "list_groups":
@@ -755,6 +824,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             messages = await client.search_messages(
                 arguments["query"],
                 limit=int(arguments.get("limit", 50)),
+                offset=int(arguments.get("offset", 0)),
                 sender=arguments.get("sender"),
             )
             return _ok([client._enrich_message(m) for m in messages])
@@ -784,8 +854,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 emoji=arguments["emoji"],
                 recipient=arguments.get("recipient"),
                 group_id=arguments.get("group_id"),
+                remove=arguments.get("remove", False),
             )
-            return _ok({"status": "reaction sent"})
+            action = "reaction removed" if arguments.get("remove") else "reaction sent"
+            return _ok({"status": action})
 
         elif name == "set_typing":
             await client.set_typing(arguments["recipient"], stop=arguments.get("stop", False))
@@ -895,6 +967,47 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "leave_group":
             await client.leave_group(arguments["group_id"])
             return _ok({"status": "left group", "group_id": arguments["group_id"]})
+
+        elif name == "pin_message":
+            if not arguments.get("recipient") and not arguments.get("group_id"):
+                return _err("Either recipient or group_id is required")
+            await client.pin_message(
+                target_author=arguments["target_author"],
+                target_timestamp=arguments["target_timestamp"],
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+            )
+            return _ok({"status": "message pinned"})
+
+        elif name == "unpin_message":
+            if not arguments.get("recipient") and not arguments.get("group_id"):
+                return _err("Either recipient or group_id is required")
+            await client.unpin_message(
+                target_author=arguments["target_author"],
+                target_timestamp=arguments["target_timestamp"],
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+            )
+            return _ok({"status": "message unpinned"})
+
+        elif name == "admin_delete_message":
+            await client.admin_delete_message(
+                target_author=arguments["target_author"],
+                target_timestamp=arguments["target_timestamp"],
+                group_id=arguments["group_id"],
+            )
+            return _ok({"status": "message deleted by admin"})
+
+        elif name == "send_contacts_sync":
+            await client.send_contacts_sync()
+            return _ok({"status": "contacts synced to linked devices"})
+
+        elif name == "update_device":
+            await client.update_device(
+                device_id=int(arguments["device_id"]),
+                name=arguments["name"],
+            )
+            return _ok({"status": "device updated", "device_id": arguments["device_id"], "name": arguments["name"]})
 
         elif name == "set_expiration_timer":
             await client.set_expiration_timer(

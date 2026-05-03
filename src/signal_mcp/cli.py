@@ -239,12 +239,13 @@ def edit(recipient: str, timestamp: int, message: str):
 @click.argument("query")
 @click.option("--sender", default=None, help="Restrict to messages from this phone number (E.164)")
 @click.option("--limit", default=50, show_default=True, help="Max results")
+@click.option("--offset", default=0, show_default=True, help="Skip this many results (pagination)")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query: str, sender: str | None, limit: int, as_json: bool):
+def search(query: str, sender: str | None, limit: int, offset: int, as_json: bool):
     """Search recent messages for QUERY."""
     async def _run():
         async with SignalClient() as client:
-            messages = await client.search_messages(query, limit=limit, sender=sender)
+            messages = await client.search_messages(query, limit=limit, offset=offset, sender=sender)
             if not messages:
                 click.echo("No messages found.")
                 return

@@ -451,3 +451,22 @@ def test_count_conversation_group():
     store.save_message(make_msg(id="cc6", sender="+1", group_id="g1"))
     store.save_message(make_msg(id="cc7", sender="+2", group_id="g1"))
     assert store.count_conversation("g1") == 2
+
+
+# ── search_messages offset ────────────────────────────────────────────────────
+
+def test_search_messages_offset():
+    store.save_message(make_msg(id="o1", sender="+1", body="needle first"))
+    store.save_message(make_msg(id="o2", sender="+1", body="needle second",
+                                ts=datetime(2024, 6, 1, 11, 0, 0)))
+    all_results = store.search_messages("needle", limit=10)
+    assert len(all_results) == 2
+    offset_results = store.search_messages("needle", limit=10, offset=1)
+    assert len(offset_results) == 1
+    # With offset=0 should equal all
+    assert store.search_messages("needle", limit=10, offset=0) == all_results
+
+
+def test_search_messages_offset_beyond_end():
+    store.save_message(make_msg(id="o3", sender="+1", body="thing"))
+    assert store.search_messages("thing", limit=10, offset=99) == []

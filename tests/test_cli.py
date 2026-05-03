@@ -382,7 +382,7 @@ def test_search_with_sender(runner):
         result = runner.invoke(cli, ["search", "filtered", "--sender", "+11111111111"])
     assert result.exit_code == 0
     assert "filtered" in result.output
-    client.search_messages.assert_called_once_with("filtered", limit=50, sender="+11111111111")
+    client.search_messages.assert_called_once_with("filtered", limit=50, offset=0, sender="+11111111111")
 
 
 def test_search_with_limit(runner):
@@ -390,7 +390,7 @@ def test_search_with_limit(runner):
     client.search_messages = AsyncMock(return_value=[])
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["search", "x", "--limit", "10"])
-    client.search_messages.assert_called_once_with("x", limit=10, sender=None)
+    client.search_messages.assert_called_once_with("x", limit=10, offset=0, sender=None)
 
 
 # ── receive ───────────────────────────────────────────────────────────────────
