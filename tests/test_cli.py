@@ -456,3 +456,122 @@ def test_update_device_cmd(runner):
     assert result.exit_code == 0
     assert "renamed" in result.output
     client.update_device.assert_called_once_with(2, "My Mac")
+
+
+# ── react ─────────────────────────────────────────────────────────────────────
+
+def test_react_dm(runner):
+    client = _mock_client()
+    client.react_to_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["react", "+19999999999", "1234567890", "+1sender", "👍"])
+    assert result.exit_code == 0
+    assert "👍" in result.output
+    client.react_to_message.assert_called_once_with(
+        "+1sender", 1234567890, "👍", remove=False, recipient="+19999999999"
+    )
+
+
+def test_react_group(runner):
+    client = _mock_client()
+    client.react_to_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["react", "grp==", "1234567890", "+1sender", "❤️"])
+    assert result.exit_code == 0
+    client.react_to_message.assert_called_once_with(
+        "+1sender", 1234567890, "❤️", remove=False, group_id="grp=="
+    )
+
+
+def test_react_remove(runner):
+    client = _mock_client()
+    client.react_to_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["react", "+19999999999", "1234567890", "+1sender", "👍", "--remove"])
+    assert result.exit_code == 0
+    assert "removed" in result.output
+    client.react_to_message.assert_called_once_with(
+        "+1sender", 1234567890, "👍", remove=True, recipient="+19999999999"
+    )
+
+
+# ── delete ────────────────────────────────────────────────────────────────────
+
+def test_delete_dm(runner):
+    client = _mock_client()
+    client.delete_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["delete", "+19999999999", "1234567890"])
+    assert result.exit_code == 0
+    assert "deleted" in result.output.lower()
+    client.delete_message.assert_called_once_with("+19999999999", 1234567890)
+
+
+def test_delete_group(runner):
+    client = _mock_client()
+    client.delete_group_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["delete", "grp==", "1234567890"])
+    assert result.exit_code == 0
+    client.delete_group_message.assert_called_once_with("grp==", 1234567890)
+
+
+# ── block / unblock ───────────────────────────────────────────────────────────
+
+def test_block(runner):
+    client = _mock_client()
+    client.block_contact = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["block", "+19999999999"])
+    assert result.exit_code == 0
+    assert "Blocked" in result.output
+    client.block_contact.assert_called_once_with("+19999999999")
+
+
+def test_unblock(runner):
+    client = _mock_client()
+    client.unblock_contact = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["unblock", "+19999999999"])
+    assert result.exit_code == 0
+    assert "Unblocked" in result.output
+    client.unblock_contact.assert_called_once_with("+19999999999")
+
+
+# ── prune ─────────────────────────────────────────────────────────────────────
+
+def test_prune_with_yes(monkeypatch, runner):
+    monkeypatch.setattr(_store_mod, "prune_old_messages", lambda days: 12)
+    result = runner.invoke(cli, ["prune", "--days", "90", "--yes"])
+    assert result.exit_code == 0
+    assert "12" in result.output
+    assert "90" in result.output
+
+
+def test_prune_default_days(monkeypatch, runner):
+    captured = {}
+    def fake_prune(days):
+        captured["days"] = days
+        return 0
+    monkeypatch.setattr(_store_mod, "prune_old_messages", fake_prune)
+    result = runner.invoke(cli, ["prune", "--yes"])
+    assert result.exit_code == 0
+    assert captured["days"] == 180
+
+
+def test_prune_prompts_without_yes(monkeypatch, runner):
+    monkeypatch.setattr(_store_mod, "prune_old_messages", lambda days: 0)
+    # Simulate user confirming
+    result = runner.invoke(cli, ["prune", "--days", "30"], input="y\n")
+    assert result.exit_code == 0
+
+
+def test_prune_aborts_on_no(monkeypatch, runner):
+    monkeypatch.setattr(_store_mod, "prune_old_messages", lambda days: 0)
+    result = runner.invoke(cli, ["prune", "--days", "30"], input="n\n")
+    assert result.exit_code != 0
+
+
+def test_prune_rejects_zero_days(runner):
+    result = runner.invoke(cli, ["prune", "--days", "0", "--yes"])
+    assert result.exit_code != 0

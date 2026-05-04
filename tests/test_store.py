@@ -487,3 +487,45 @@ def test_mark_as_unread():
 def test_mark_as_unread_noop_empty():
     store.init_db()
     store.mark_as_unread([])  # should not raise
+
+
+# ── prune_old_messages ────────────────────────────────────────────────────────
+
+def test_prune_removes_old_messages():
+    from datetime import timedelta
+    now_ms = int(datetime.now().timestamp() * 1000)
+    old_ms = int((datetime.now() - timedelta(days=200)).timestamp() * 1000)
+
+    # Save one old and one recent message
+    old = make_msg(id="old1", sender="+1", body="old message")
+    old.timestamp = datetime.fromtimestamp(old_ms / 1000)
+    recent = make_msg(id="new1", sender="+1", body="recent message")
+    recent.timestamp = datetime.fromtimestamp(now_ms / 1000)
+    store.save_message(old)
+    store.save_message(recent)
+
+    deleted = store.prune_old_messages(days=180)
+    assert deleted == 1
+
+    remaining = store.search_messages("message")
+    assert len(remaining) == 1
+    assert remaining[0].id == "new1"
+
+
+def test_prune_returns_zero_when_nothing_old():
+    from datetime import timedelta
+    # Use a timestamp from today — should survive a 180-day prune
+    now_ms = int(datetime.now().timestamp() * 1000)
+    recent = make_msg(id="fresh1", sender="+1", body="fresh")
+    recent.timestamp = datetime.fromtimestamp(now_ms / 1000)
+    store.save_message(recent)
+    deleted = store.prune_old_messages(days=180)
+    assert deleted == 0
+
+
+def test_prune_rejects_invalid_days():
+    import pytest
+    with pytest.raises(ValueError):
+        store.prune_old_messages(days=0)
+    with pytest.raises(ValueError):
+        store.prune_old_messages(days=-5)
