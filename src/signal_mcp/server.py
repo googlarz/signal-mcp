@@ -1521,15 +1521,19 @@ async def _freshen_store(client: SignalClient) -> str | None:
 
 
 async def serve() -> None:  # pragma: no cover
-    check_signal_cli_version()
     _store.init_db()
-    client = get_client()
-    # Pre-warm: start daemon in background so first tool call doesn't cold-start
-    await client.prewarm()
-    # Pre-load contact + group names in background
-    for _cache_coro in (client._ensure_contact_cache(), client._ensure_group_cache()):
-        _t = asyncio.create_task(_cache_coro)
-        client._background_tasks.append(_t)
-    # Watchdog is already started by prewarm() via _start_watchdog() (idempotent)
+    try:
+        check_signal_cli_version()
+        client = get_client()
+        # Pre-warm: start daemon in background so first tool call doesn't cold-start
+        await client.prewarm()
+        # Pre-load contact + group names in background
+        for _cache_coro in (client._ensure_contact_cache(), client._ensure_group_cache()):
+            _t = asyncio.create_task(_cache_coro)
+            client._background_tasks.append(_t)
+        # Watchdog is already started by prewarm() via _start_watchdog() (idempotent)
+    except RuntimeError as exc:
+        import sys
+        print(f"[signal-mcp] WARNING: {exc}", file=sys.stderr)
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())
