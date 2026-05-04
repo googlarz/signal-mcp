@@ -813,7 +813,8 @@ async def test_tool_get_unread_marks_as_read():
     assert _store_mod.get_unread_messages(own_number="+10000000000") != []
     result = await call_tool("get_unread", {})
     data = json.loads(result[0].text)
-    assert len(data) == 1
+    assert len(data["messages"]) == 1
+    assert data["has_more"] is False
     # Now the store should show it as read
     assert _store_mod.get_unread_messages(own_number="+10000000000") == []
 

@@ -359,7 +359,9 @@ TOOLS = [
         description=(
             "Get new unread messages. If the background service (signal-mcp install-service) is running, "
             "reads directly from the local store. Otherwise polls signal-cli first to fetch any messages "
-            "that arrived since the last check, then returns unread. Always use this to check for new messages."
+            "that arrived since the last check, then returns unread. Always use this to check for new messages. "
+            "Messages are marked as read after retrieval. Response includes has_more=true if more unread messages "
+            "exist beyond the limit — call again with a higher limit or paginate."
         ),
         inputSchema={
             "type": "object",
@@ -1165,13 +1167,21 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "get_unread":
             await client._ensure_contact_cache()
+            await client._ensure_group_cache()
             warning = await _freshen_store(client)
-            messages = await client.get_unread_messages(limit=arguments.get("limit", 50))
+            limit = int(arguments.get("limit", 50))
+            # Fetch one extra to detect whether more exist without a COUNT query
+            messages = await client.get_unread_messages(limit=limit + 1)
+            has_more = len(messages) > limit
+            messages = messages[:limit]
             # Mark as read — Claude has now seen these messages
             unread_ids = [m.id for m in messages]
             if unread_ids:
                 await asyncio.to_thread(_store.mark_as_read, unread_ids)
-            result: dict = {"messages": [client._enrich_message(m) for m in messages]}
+            result: dict = {
+                "messages": [client._enrich_message(m) for m in messages],
+                "has_more": has_more,
+            }
             if warning:
                 result["_warning"] = warning
             return _ok(result)
