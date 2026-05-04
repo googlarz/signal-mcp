@@ -5,11 +5,9 @@
 [![Python](https://img.shields.io/pypi/pyversions/signal-mcp)](https://pypi.org/project/Signal-MCP/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-If you already have signal-cli, you already know its gaps: messages are delivered once and gone, output is raw phone numbers, the daemon needs manual babysitting, and there's no way to search what you sent last week. signal-mcp fixes all of that — and adds Claude on top.
+signal-mcp is a layer on top of [signal-cli](https://github.com/AsamK/signal-cli) that adds everything it's missing: persistent message history, full-text search, a usable conversation view, contact name resolution, and an MCP server so Claude can read, search, and act on your Signal messages. 100% local — no cloud, no third-party services.
 
-Everything runs locally via [signal-cli](https://github.com/AsamK/signal-cli). No cloud, no third-party services.
-
-## If you have signal-cli, here's what you're missing
+## What signal-cli is missing — and what signal-mcp adds
 
 **No history.** signal-cli delivers a message and forgets it. signal-mcp stores every sent and received message — including messages sent from your phone — in a local SQLite database. It stays there. You can search it, browse it, export it, and ask Claude about it.
 
@@ -31,11 +29,12 @@ The CLI and MCP server share the same store and daemon. You don't have to choose
 | Set up background message capture (once) | `signal-mcp install-service` |
 | Import full history from Signal Desktop (once) | `signal-mcp import-desktop` |
 | Export a conversation to CSV | `signal-mcp export --recipient +49... --format csv` |
+| Check unread messages and conversations | `signal-mcp conversations` |
 | "What did I miss while I was offline?" | Claude via MCP |
 | "Find every message mentioning the invoice" | Claude via MCP |
 | "Summarize my week with Marco and draft a reply" | Claude via MCP |
 | "Who in my contacts hasn't messaged me in a month?" | Claude via MCP |
-| "Send the team: standup in 5 minutes" | Claude via MCP |
+| "Send the team: standup in 5 minutes" | Claude via MCP or CLI |
 
 ## Features
 
@@ -210,6 +209,8 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 |---|---|
 | `list_sticker_packs` | List all installed sticker packs with `pack_id` and sticker IDs for `send_sticker`. |
 | `add_sticker_pack` | Install a sticker pack from a `signal.art` URL. |
+| `get_sticker` | Retrieve a single sticker image as base64. |
+| `upload_sticker_pack` | Upload and publish a sticker pack from a local manifest.json or zip. Returns the signal.art URL. |
 
 ### Contacts
 
@@ -258,6 +259,10 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `add_device` | Link a new device using a device link URI. |
 | `remove_device` | Unlink a device by ID. |
 | `update_device` | Rename a linked device. |
+| `list_accounts` | List all Signal accounts configured in signal-cli on this machine. |
+| `update_account` | Update account settings: device name, discoverability, number sharing, username. |
+| `set_pin` | Set the Signal registration lock PIN. |
+| `remove_pin` | Remove the Signal registration lock PIN. |
 | `get_avatar` | Retrieve the avatar image for a contact or group as base64. |
 
 ### Polls
@@ -365,7 +370,7 @@ Run both for complete coverage.
 ## Architecture
 
 ```
-Claude Code
+Claude (Claude Code / Claude Desktop)
     │  MCP (stdio transport)
     ▼
 signal-mcp serve
@@ -384,7 +389,7 @@ The signal-cli daemon starts automatically on first use and stays alive across t
 
 signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli.1.adoc). Here's what is and isn't covered:
 
-### Covered (62 tools)
+### Covered (68 tools)
 
 | signal-cli command | signal-mcp tool |
 |---|---|
