@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **62 MCP tools** — covers ~90% of what signal-cli exposes (see [coverage matrix](#signal-cli-coverage))
+- **68 MCP tools** — covers everything signal-cli exposes that's feasible via MCP (see [coverage matrix](#signal-cli-coverage))
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -405,24 +405,26 @@ signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signa
 | `updateProfile` | `update_profile` |
 | `updateConfiguration` | `update_configuration`, `get_configuration` |
 | `addStickerPack` | `add_sticker_pack` |
+| `getSticker` | `get_sticker` |
+| `uploadStickerPack` | `upload_sticker_pack` |
+| `listAccounts` | `list_accounts` |
+| `updateAccount` | `update_account` |
+| `setPin` / `removePin` | `set_pin` / `remove_pin` |
 
 Plus tools with no direct signal-cli equivalent: `get_conversation`, `search_messages`, `list_conversations`, `store_stats`, `import_desktop`, `export_messages`, `mark_as_unread`, `clear_local_store`, `delete_local_messages`.
 
 ### Not covered
 
-| signal-cli command | Reason not covered |
+These commands are deliberately excluded — they are not feasible to implement as MCP tools:
+
+| signal-cli command | Why |
 |---|---|
-| `acceptCall` / `hangupCall` / `rejectCall` / `startCall` / `listCalls` | Voice/video calls require WebRTC and an active UI; not feasible via MCP |
-| `register` / `verify` / `link` / `unregister` | Initial account setup — must be done once before installing signal-mcp |
-| `startChangeNumber` / `finishChangeNumber` | Multi-step phone number migration flow |
-| `setPin` / `removePin` | Registration PIN management — rarely needed, easy to do in CLI directly |
-| `deleteLocalAccountData` | Destroys all local data; too dangerous to expose as an MCP tool |
-| `listAccounts` | Multi-account support not implemented; signal-mcp targets a single account |
-| `sendPaymentNotification` | MobileCoin payments (requires funded wallet; out of scope) |
-| `submitRateLimitChallenge` | Rate-limit CAPTCHA bypass — only needed after bulk sends |
-| `updateAccount` | Low-level account settings (service environment, etc.); rarely needed |
-| `uploadStickerPack` | Create and publish new sticker packs — content creation, not messaging |
-| `getSticker` | Retrieve raw sticker image bytes — we expose the sticker pack list instead |
+| `acceptCall` / `hangupCall` / `rejectCall` / `startCall` / `listCalls` | Voice/video calls require WebRTC and an active media stack — not feasible via MCP |
+| `register` / `verify` / `link` / `unregister` | One-time account setup; must be done before installing signal-mcp |
+| `startChangeNumber` / `finishChangeNumber` | Multi-step phone number migration involving SMS verification |
+| `deleteLocalAccountData` | Irreversibly destroys all local Signal data; too destructive to expose |
+| `sendPaymentNotification` | MobileCoin payments (requires a funded wallet; out of scope) |
+| `submitRateLimitChallenge` | CAPTCHA bypass for rate limits — not automatable |
 
 ## Development
 

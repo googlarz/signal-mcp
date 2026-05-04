@@ -376,13 +376,16 @@ async def test_send_group_attachment_rpc_params(client):
 @respx.mock
 @pytest.mark.asyncio
 async def test_send_read_receipt_rpc_params(client):
-    """send_read_receipt must pass recipient as a list."""
+    """send_read_receipt must use sendReceipt with receiptType=read."""
     route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     await client.send_read_receipt("+19999999999", [111, 222])
     import json
-    params = json.loads(route.calls[0].request.read())["params"]
-    assert params["recipient"] == ["+19999999999"]
-    assert params["targetTimestamps"] == [111, 222]
+    body = json.loads(route.calls[0].request.read())
+    assert body["method"] == "sendReceipt"
+    params = body["params"]
+    assert params["recipient"] == "+19999999999"
+    assert params["targetTimestamp"] == [111, 222]
+    assert params["receiptType"] == "read"
 
 
 @respx.mock
@@ -1397,3 +1400,104 @@ async def test_ensure_group_cache(client):
     await client._ensure_group_cache()
     assert client.resolve_group_name("grpAAA==") == "Weekend plans"
     assert client.resolve_group_name("unknown==") == "unknown=="
+
+
+# ── sendReceipt fix ───────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_read_receipt_rpc_method(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.send_read_receipt("+19999999999", [111, 222])
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendReceipt"
+    assert req_body["params"]["receiptType"] == "read"
+    assert req_body["params"]["targetTimestamp"] == [111, 222]
+
+
+# ── new tools: stickers, accounts, PIN ───────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_sticker(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "abc123"})))
+    result = await client.get_sticker("deadbeef", 3)
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "getSticker"
+    assert req_body["params"]["packId"] == "deadbeef"
+    assert req_body["params"]["stickerId"] == 3
+    assert result == "abc123"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_upload_sticker_pack(client, tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"url": "https://signal.art/addstickers/#pack_id=abc"})))
+    result = await client.upload_sticker_pack(str(manifest))
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "uploadStickerPack"
+    assert "manifest.json" in req_body["params"]["path"]
+    assert "signal.art" in result
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_accounts(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([{"number": "+491739048003"}])))
+    accounts = await client.list_accounts()
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "listAccounts"
+    assert "+491739048003" in accounts
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_account(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_account(device_name="My Mac", discoverable_by_number=True, number_sharing=False)
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "updateAccount"
+    assert req_body["params"]["deviceName"] == "My Mac"
+    assert req_body["params"]["discoverableByNumber"] is True
+    assert req_body["params"]["numberSharing"] is False
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_account_username(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_account(username="myuser")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["username"] == "myuser"
+    assert "deleteUsername" not in req_body["params"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_account_delete_username(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.update_account(delete_username=True)
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["deleteUsername"] is True
+    assert "username" not in req_body["params"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_set_pin(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.set_pin("123456")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "setPin"
+    assert req_body["params"]["pin"] == "123456"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_remove_pin(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.remove_pin()
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "removePin"

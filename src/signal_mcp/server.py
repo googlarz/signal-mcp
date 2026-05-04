@@ -22,6 +22,7 @@ _DAEMON_FREE = {
     "get_conversation", "search_messages", "get_unread", "get_own_number",
     "list_attachments", "get_attachment",
     "clear_local_store", "delete_local_messages", "export_messages",
+    "list_accounts",
 }
 # Note: get_configuration, update_configuration, list_sticker_packs, add_sticker_pack
 # all require the daemon (they call signal-cli JSON-RPC)
@@ -752,6 +753,65 @@ TOOLS += [
             "required": ["filename"],
         },
     ),
+    Tool(
+        name="get_sticker",
+        description="Retrieve a single sticker image as base64. Use list_sticker_packs to find pack_id and sticker_id values.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string from list_sticker_packs)"},
+                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack"},
+            },
+            "required": ["pack_id", "sticker_id"],
+        },
+    ),
+    Tool(
+        name="upload_sticker_pack",
+        description="Upload and publish a sticker pack from a local manifest.json or zip file. Returns the signal.art URL.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Local path to manifest.json or a zip containing the sticker pack"},
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
+        name="list_accounts",
+        description="List all Signal accounts (phone numbers) configured in signal-cli on this machine.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="update_account",
+        description="Update account-level settings: device name, discoverability, number sharing, username.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "device_name": {"type": "string", "description": "Name shown on linked-device list"},
+                "discoverable_by_number": {"type": "boolean", "description": "Allow others to find you by phone number"},
+                "number_sharing": {"type": "boolean", "description": "Share your number when sending messages"},
+                "username": {"type": "string", "description": "Set a Signal username (without @)"},
+                "delete_username": {"type": "boolean", "description": "Delete the current username"},
+                "unrestricted_unidentified_sender": {"type": "boolean", "description": "Allow sealed-sender from anyone"},
+            },
+        },
+    ),
+    Tool(
+        name="set_pin",
+        description="Set the Signal registration lock PIN (protects your account if your SIM is stolen).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "pin": {"type": "string", "description": "4–20 digit PIN"},
+            },
+            "required": ["pin"],
+        },
+    ),
+    Tool(
+        name="remove_pin",
+        description="Remove the Signal registration lock PIN.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
 ]
 
 
@@ -799,6 +859,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "trust_identity":       ["number"],
             "get_attachment":       ["filename"],
             "add_sticker_pack":     ["uri"],
+            "get_sticker":          ["pack_id", "sticker_id"],
+            "upload_sticker_pack":  ["path"],
+            "set_pin":              ["pin"],
             "edit_message":         ["target_timestamp", "message"],
             "clear_local_store":    ["confirm"],
             "delete_local_messages":["recipient"],
@@ -1151,6 +1214,37 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "add_sticker_pack":
             await client.add_sticker_pack(arguments["uri"])
             return _ok({"status": "installed"})
+
+        elif name == "get_sticker":
+            data = await client.get_sticker(arguments["pack_id"], int(arguments["sticker_id"]))
+            return _ok({"base64": data})
+
+        elif name == "upload_sticker_pack":
+            url = await client.upload_sticker_pack(arguments["path"])
+            return _ok({"url": url})
+
+        elif name == "list_accounts":
+            accounts = await client.list_accounts()
+            return _ok(accounts)
+
+        elif name == "update_account":
+            await client.update_account(
+                device_name=arguments.get("device_name"),
+                discoverable_by_number=arguments.get("discoverable_by_number"),
+                number_sharing=arguments.get("number_sharing"),
+                username=arguments.get("username"),
+                delete_username=arguments.get("delete_username", False),
+                unrestricted_unidentified_sender=arguments.get("unrestricted_unidentified_sender"),
+            )
+            return _ok({"status": "account updated"})
+
+        elif name == "set_pin":
+            await client.set_pin(arguments["pin"])
+            return _ok({"status": "PIN set"})
+
+        elif name == "remove_pin":
+            await client.remove_pin()
+            return _ok({"status": "PIN removed"})
 
         elif name == "clear_local_store":
             if not arguments.get("confirm"):

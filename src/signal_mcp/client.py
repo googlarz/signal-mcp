@@ -913,6 +913,64 @@ class SignalClient:
         """Install a sticker pack from a signal.art URL."""
         await self._rpc("addStickerPack", {"uri": uri})
 
+    async def get_sticker(self, pack_id: str, sticker_id: int) -> str:
+        """Get a single sticker image as a base64-encoded string."""
+        result = await self._rpc("getSticker", {"packId": pack_id, "stickerId": sticker_id})
+        if isinstance(result, dict):
+            return result.get("base64", "") or ""
+        return str(result) if result else ""
+
+    async def upload_sticker_pack(self, path: str) -> str:
+        """Upload a sticker pack from a local manifest.json or zip file.
+
+        Returns the signal.art URL for the published pack.
+        """
+        resolved = str(Path(path).expanduser().resolve())
+        result = await self._rpc("uploadStickerPack", {"path": resolved})
+        if isinstance(result, dict):
+            return result.get("url", "") or str(result)
+        return str(result) if result else ""
+
+    async def list_accounts(self) -> list[str]:
+        """List all phone numbers (accounts) configured in signal-cli."""
+        result = await self._rpc("listAccounts")
+        if isinstance(result, list):
+            return [entry.get("number") or entry for entry in result if entry]
+        return []
+
+    async def update_account(
+        self,
+        device_name: str | None = None,
+        discoverable_by_number: bool | None = None,
+        number_sharing: bool | None = None,
+        username: str | None = None,
+        delete_username: bool = False,
+        unrestricted_unidentified_sender: bool | None = None,
+    ) -> None:
+        """Update account-level settings."""
+        params: dict = {}
+        if device_name is not None:
+            params["deviceName"] = device_name
+        if discoverable_by_number is not None:
+            params["discoverableByNumber"] = discoverable_by_number
+        if number_sharing is not None:
+            params["numberSharing"] = number_sharing
+        if delete_username:
+            params["deleteUsername"] = True
+        elif username is not None:
+            params["username"] = username
+        if unrestricted_unidentified_sender is not None:
+            params["unrestrictedUnidentifiedSender"] = unrestricted_unidentified_sender
+        await self._rpc("updateAccount", params or None)
+
+    async def set_pin(self, pin: str) -> None:
+        """Set the Signal registration lock PIN."""
+        await self._rpc("setPin", {"pin": pin})
+
+    async def remove_pin(self) -> None:
+        """Remove the Signal registration lock PIN."""
+        await self._rpc("removePin")
+
     # ── Streaming receive ─────────────────────────────────────────────────────
 
     async def receive_stream(self, poll_interval: int = 2):
@@ -960,9 +1018,10 @@ class SignalClient:
         await asyncio.to_thread(_store.update_message_body, target_timestamp, message)
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
-        await self._rpc("sendReadReceipt", {
-            "recipient": [sender],
-            "targetTimestamps": timestamps,
+        await self._rpc("sendReceipt", {
+            "recipient": sender,
+            "targetTimestamp": timestamps,
+            "receiptType": "read",
         })
         # Mark as read in local store — received message IDs are str(timestamp_ms)
         await asyncio.to_thread(_store.mark_as_read, [str(ts) for ts in timestamps])

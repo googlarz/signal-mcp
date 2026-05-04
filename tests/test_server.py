@@ -1104,3 +1104,97 @@ async def test_tool_send_attachment_paths_array(tmp_path):
 async def test_tool_send_attachment_no_path():
     result = await call_tool("send_attachment", {"recipient": "+1"})
     assert "Error" in result[0].text
+
+
+# ── sendReceipt fix ───────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_read_receipt_uses_sendReceipt():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("send_read_receipt", {"sender": "+19999999999", "timestamps": [100, 200]})
+    assert "sent" in result[0].text
+
+
+# ── get_sticker ───────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_get_sticker():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "xyz"})))
+    result = await call_tool("get_sticker", {"pack_id": "deadbeef", "sticker_id": 2})
+    data = json.loads(result[0].text)
+    assert data["base64"] == "xyz"
+
+
+@pytest.mark.asyncio
+async def test_tool_get_sticker_missing_params():
+    result = await call_tool("get_sticker", {"pack_id": "abc"})
+    assert "Error" in result[0].text
+
+
+# ── upload_sticker_pack ───────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_upload_sticker_pack(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"url": "https://signal.art/x"})))
+    result = await call_tool("upload_sticker_pack", {"path": str(manifest)})
+    data = json.loads(result[0].text)
+    assert "signal.art" in data["url"]
+
+
+@pytest.mark.asyncio
+async def test_tool_upload_sticker_pack_missing_path():
+    result = await call_tool("upload_sticker_pack", {})
+    assert "Error" in result[0].text
+
+
+# ── list_accounts ─────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_list_accounts():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([{"number": "+491739048003"}])))
+    result = await call_tool("list_accounts", {})
+    data = json.loads(result[0].text)
+    assert "+491739048003" in data
+
+
+# ── update_account ────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_update_account():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("update_account", {"device_name": "My Mac"})
+    data = json.loads(result[0].text)
+    assert data["status"] == "account updated"
+
+
+# ── set_pin / remove_pin ──────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_set_pin():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("set_pin", {"pin": "1234"})
+    data = json.loads(result[0].text)
+    assert data["status"] == "PIN set"
+
+
+@pytest.mark.asyncio
+async def test_tool_set_pin_missing():
+    result = await call_tool("set_pin", {})
+    assert "Error" in result[0].text
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_remove_pin():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("remove_pin", {})
+    data = json.loads(result[0].text)
+    assert data["status"] == "PIN removed"
