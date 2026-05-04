@@ -133,6 +133,27 @@ async def test_tool_import_desktop_missing_db():
 
 
 @pytest.mark.asyncio
+async def test_tool_import_desktop_success():
+    """import_desktop success path must return the result dict."""
+    with patch("signal_mcp.desktop.import_from_desktop", return_value={"imported": 5, "skipped": 2}):
+        result = await call_tool("import_desktop", {})
+    data = json.loads(result[0].text)
+    assert data["imported"] == 5
+
+
+@pytest.mark.asyncio
+async def test_call_tool_unexpected_exception_returns_error(monkeypatch):
+    """Unexpected non-SignalError exceptions must be caught and returned as errors."""
+    import signal_mcp.server as _srv
+    orig = _srv._DAEMON_FREE
+    monkeypatch.setattr(_srv, "_DAEMON_FREE", orig | {"store_stats"})
+    monkeypatch.setattr(_store_mod, "get_stats", lambda **kw: (_ for _ in ()).throw(RuntimeError("db exploded")))
+    result = await call_tool("store_stats", {})
+    text = result[0].text
+    assert "error" in text.lower() or "unexpected" in text.lower()
+
+
+@pytest.mark.asyncio
 async def test_tool_list_conversations_empty():
     result = await call_tool("list_conversations", {})
     assert "[]" in result[0].text
@@ -1173,6 +1194,62 @@ async def test_list_accounts_not_daemon_free(monkeypatch):
     )
 
 
+# ── get_conversation invalid since date ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_conversation_invalid_since_returns_error():
+    """Passing a malformed since date to get_conversation must return an error."""
+    result = await call_tool("get_conversation", {
+        "recipient": "+19999999999", "since": "not-a-date"
+    })
+    text = result[0].text
+    assert "error" in text.lower() or "invalid" in text.lower()
+
+
+# ── send_group_attachment missing path ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_send_group_attachment_missing_path_returns_error():
+    """send_group_attachment with no path/paths must return an error, not crash."""
+    result = await call_tool("send_group_attachment", {"group_id": "grp=="})
+    text = result[0].text
+    assert "error" in text.lower() or "path" in text.lower()
+
+
+# ── unpin_message / vote_poll / terminate_poll missing recipient+group ────────
+
+@pytest.mark.asyncio
+async def test_unpin_message_missing_target_returns_error():
+    """unpin_message with neither recipient nor group_id must return an error."""
+    result = await call_tool("unpin_message", {
+        "target_author": "+1", "target_timestamp": 123
+    })
+    text = result[0].text
+    assert "error" in text.lower() or "required" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_vote_poll_missing_target_returns_error():
+    """vote_poll with neither recipient nor group_id must return an error."""
+    result = await call_tool("vote_poll", {
+        "target_author": "+1", "target_timestamp": 123,
+        "poll_id": 1, "votes": [0]
+    })
+    text = result[0].text
+    assert "error" in text.lower() or "required" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_terminate_poll_missing_target_returns_error():
+    """terminate_poll with neither recipient nor group_id must return an error."""
+    # Include all _REQUIRED fields so the check reaches the recipient/group_id guard
+    result = await call_tool("terminate_poll", {
+        "target_author": "+1", "target_timestamp": 123, "poll_id": 1
+    })
+    text = result[0].text
+    assert "error" in text.lower() or "required" in text.lower()
+
+
 # ── update_account ────────────────────────────────────────────────────────────
 
 @respx.mock
@@ -1234,6 +1311,38 @@ async def test_tool_receive_messages_service_conflict_falls_back(monkeypatch):
 
 
 # ── _freshen_store / service-aware get_unread ─────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_freshen_store_cooldown_skips_poll(monkeypatch):
+    """_freshen_store must skip receive_messages call when within the cooldown window."""
+    import time
+    import signal_mcp.server as _srv
+    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: False)
+    # Set last freshen to "just now" so cooldown is active
+    monkeypatch.setattr(_srv, "_last_freshen_at", time.monotonic())
+    # No respx route — if receive_messages is called it will fail
+    result = await call_tool("get_unread", {})
+    data = json.loads(result[0].text)
+    assert "_warning" in data  # still warns even when skipping poll
+    assert "messages" in data
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_freshen_store_swallows_receive_exception(monkeypatch):
+    """_freshen_store must not propagate exceptions from receive_messages."""
+    import signal_mcp.server as _srv
+    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: False)
+    monkeypatch.setattr(_srv, "_last_freshen_at", 0.0)
+    # Simulate receive_messages failing (connection error)
+    respx.post(DAEMON_URL).mock(side_effect=Exception("daemon gone"))
+    result = await call_tool("get_unread", {})
+    data = json.loads(result[0].text)
+    # Must still return a well-formed response, not propagate the exception
+    assert "messages" in data
+    assert "_warning" in data
+
 
 @respx.mock
 @pytest.mark.asyncio

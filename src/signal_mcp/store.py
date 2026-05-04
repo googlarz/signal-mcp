@@ -560,6 +560,3 @@ def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list
     ]
 
 
-def _row_to_message(conn: sqlite3.Connection, row: sqlite3.Row) -> Message:
-    """Single-row convenience wrapper — uses batch loader internally."""
-    return _rows_to_messages(conn, [row])[0]

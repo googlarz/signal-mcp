@@ -1198,12 +1198,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "list_conversations":
             await client._ensure_contact_cache()
             await client._ensure_group_cache()
+            # client.list_conversations() already resolves names via resolve_name/resolve_group_name
             conversations = await client.list_conversations()
-            for conv in conversations:
-                if conv["type"] == "direct":
-                    conv["name"] = client.resolve_name(conv["id"])
-                else:
-                    conv["name"] = client.resolve_group_name(conv["id"])
             return _ok(conversations)
 
         elif name == "delete_message":
