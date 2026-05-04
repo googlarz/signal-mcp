@@ -370,17 +370,21 @@ Run both for complete coverage.
 ## Architecture
 
 ```
-Claude (Claude Code / Claude Desktop)
-    │  MCP (stdio transport)
-    ▼
-signal-mcp serve
-    ├── SQLite store  (~/.local/share/signal-mcp/messages.db)
-    │     FTS5 full-text search, sent + received messages
-    │
-    └── signal-cli daemon  (JSON-RPC on localhost:7583)
-            │  Signal protocol (libsignal)
-            ▼
-        Signal network
+Claude (Claude Code / Claude Desktop)        Terminal / scripts
+    │  MCP (stdio transport)                     │  signal-mcp <cmd>
+    ▼                                            ▼
+signal-mcp serve ──────────────────── signal-mcp CLI
+    │                                            │
+    └──────────────┬──────────────────────────── ┘
+                   │
+        ┌──────────┴───────────┐
+        │                      │
+   SQLite store          signal-cli daemon
+   (~/.local/share/       (JSON-RPC :7583)
+    signal-mcp/                │
+    messages.db)               │  Signal protocol
+   FTS5 search                 ▼
+                          Signal network
 ```
 
 The signal-cli daemon starts automatically on first use and stays alive across tool calls. Received attachments are saved to `~/Downloads/signal-attachments/`.
