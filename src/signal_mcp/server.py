@@ -1521,8 +1521,6 @@ async def serve() -> None:
     for _cache_coro in (client._ensure_contact_cache(), client._ensure_group_cache()):
         _t = asyncio.create_task(_cache_coro)
         client._background_tasks.append(_t)
-    # Watchdog: auto-restart daemon if it crashes
-    watchdog_task = asyncio.create_task(client.watchdog())
-    client._background_tasks.append(watchdog_task)
+    # Watchdog is already started by prewarm() via _start_watchdog() (idempotent)
     async with stdio_server() as (read_stream, write_stream):
         await app.run(read_stream, write_stream, app.create_initialization_options())

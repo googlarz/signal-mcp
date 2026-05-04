@@ -23,7 +23,7 @@ def rpc_ok(result) -> dict:
 def reset_client(monkeypatch, tmp_path):
     # Redirect store to temp DB and reset init flag for every test
     monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(_store_mod, "_initialized", False)
+    monkeypatch.setattr(_store_mod, "_initialized_paths", set())
     if getattr(_store_mod._thread_local, "conn", None) is not None:
         _store_mod._thread_local.conn.close()
         _store_mod._thread_local.conn = None

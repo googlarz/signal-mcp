@@ -12,7 +12,7 @@ from signal_mcp import store
 def temp_db(tmp_path, monkeypatch):
     """Redirect DB to a temp file and reset init flag for each test."""
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "test_messages.db")
-    monkeypatch.setattr(store, "_initialized", False)
+    monkeypatch.setattr(store, "_initialized_paths", set())
     if getattr(store._thread_local, "conn", None) is not None:
         store._thread_local.conn.close()
         store._thread_local.conn = None
@@ -310,7 +310,7 @@ def test_migration_adds_recipient_column(tmp_path, monkeypatch):
     import sqlite3
     db_path = tmp_path / "old.db"
     monkeypatch.setattr(store, "DB_PATH", db_path)
-    monkeypatch.setattr(store, "_initialized", False)
+    monkeypatch.setattr(store, "_initialized_paths", set())
     if getattr(store._thread_local, "conn", None) is not None:
         store._thread_local.conn.close()
         store._thread_local.conn = None
@@ -326,7 +326,7 @@ def test_migration_adds_recipient_column(tmp_path, monkeypatch):
     conn.close()
 
     # init_db should run migration without error
-    monkeypatch.setattr(store, "_initialized", False)
+    monkeypatch.setattr(store, "_initialized_paths", set())
     if getattr(store._thread_local, "conn", None) is not None:
         store._thread_local.conn.close()
         store._thread_local.conn = None
@@ -667,3 +667,73 @@ def test_mark_as_unread_large_batch():
     store.mark_as_unread(ids)
     unread = store.get_unread_messages(own_number="+99", limit=700)
     assert len(unread) == 600
+
+
+# ── delete_conversation_messages / FTS consistency ────────────────────────────
+
+def test_delete_conversation_messages_removes_from_fts():
+    """After delete_conversation_messages, FTS must not return deleted content."""
+    store.save_message(make_msg(id="del1", sender="+1", body="findme gone"))
+    store.save_message(make_msg(id="del2", sender="+2", body="findme stays"))
+    # Verify both searchable before deletion
+    assert len(store.search_messages("findme")) == 2
+    store.delete_conversation_messages("+1")
+    results = store.search_messages("findme")
+    assert len(results) == 1
+    assert results[0].id == "del2"
+
+
+def test_delete_conversation_messages_returns_count():
+    store.save_message(make_msg(id="dc1", sender="+1", body="a"))
+    store.save_message(make_msg(id="dc2", sender="+1", body="b"))
+    store.save_message(make_msg(id="dc3", sender="+2", body="c"))
+    count = store.delete_conversation_messages("+1")
+    assert count == 2
+    assert len(store.get_conversation("+1")) == 0
+    assert len(store.get_conversation("+2")) == 1
+
+
+def test_delete_conversation_messages_group():
+    """delete_conversation_messages with a group_id removes all group messages."""
+    store.save_message(make_msg(id="gd1", sender="+1", group_id="grp==X", body="group msg"))
+    store.save_message(make_msg(id="gd2", sender="+2", group_id="grp==X", body="group msg 2"))
+    store.save_message(make_msg(id="gd3", sender="+1", body="direct msg"))  # different conv
+    count = store.delete_conversation_messages("grp==X")
+    assert count == 2
+    assert store.get_conversation("grp==X") == []
+    assert len(store.get_conversation("+1")) == 1
+
+
+def test_delete_conversation_messages_no_match_returns_zero():
+    count = store.delete_conversation_messages("+nobody")
+    assert count == 0
+
+
+# ── _initialized_paths — path-keyed init flag ────────────────────────────────
+
+def test_init_db_reinitializes_after_path_change(tmp_path, monkeypatch):
+    """init_db must fully initialize a new DB when DB_PATH changes."""
+    db_a = tmp_path / "a.db"
+    db_b = tmp_path / "b.db"
+    # Init with path A
+    monkeypatch.setattr(store, "DB_PATH", db_a)
+    monkeypatch.setattr(store, "_initialized_paths", set())
+    if getattr(store._thread_local, "conn", None):
+        store._thread_local.conn.close()
+        store._thread_local.conn = None
+    store.init_db()
+    store.save_message(make_msg(id="a1", sender="+1", body="in A"))
+    # Switch to path B
+    monkeypatch.setattr(store, "DB_PATH", db_b)
+    if getattr(store._thread_local, "conn", None):
+        store._thread_local.conn.close()
+        store._thread_local.conn = None
+    store.init_db()  # must initialize B, not skip because A was done
+    # B must be empty
+    assert store.get_conversation("+1") == []
+    # A still has the message
+    monkeypatch.setattr(store, "DB_PATH", db_a)
+    if getattr(store._thread_local, "conn", None):
+        store._thread_local.conn.close()
+        store._thread_local.conn = None
+    assert len(store.get_conversation("+1")) == 1

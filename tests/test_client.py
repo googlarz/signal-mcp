@@ -24,7 +24,7 @@ def rpc_err(message: str, code: int = -1) -> dict:
 def reset_store(monkeypatch, tmp_path):
     """Redirect store to temp DB for each test."""
     monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(_store_mod, "_initialized", False)
+    monkeypatch.setattr(_store_mod, "_initialized_paths", set())
     # Close any cached thread-local connection so next call reconnects to the new path
     if getattr(_store_mod._thread_local, "conn", None) is not None:
         _store_mod._thread_local.conn.close()
@@ -351,7 +351,7 @@ async def test_send_message_rpc_params(client, tmp_path, monkeypatch):
     """send_message must pass recipient as a list."""
     import signal_mcp.store as s
     monkeypatch.setattr(s, "DB_PATH", tmp_path / "t.db")
-    monkeypatch.setattr(s, "_initialized", False)
+    monkeypatch.setattr(s, "_initialized_paths", set())
     route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
     await client.send_message("+19999999999", "hi")
     import json

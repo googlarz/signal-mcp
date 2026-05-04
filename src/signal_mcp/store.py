@@ -14,7 +14,7 @@ from .models import Attachment, Message
 
 DB_PATH = Path.home() / ".local" / "share" / "signal-mcp" / "messages.db"
 
-_initialized = False
+_initialized_paths: set[str] = set()  # paths already schema-initialized
 _thread_local = threading.local()  # per-thread connection cache
 
 
@@ -53,8 +53,9 @@ def _db():
 
 
 def init_db() -> None:
-    global _initialized
-    if _initialized:
+    global _initialized_paths
+    db_key = str(DB_PATH)
+    if db_key in _initialized_paths:
         return
     with _db() as conn:
         conn.executescript("""
@@ -113,7 +114,7 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_messages_unread "
             "ON messages(is_read, sender, timestamp) WHERE is_read = 0"
         )
-    _initialized = True
+    _initialized_paths.add(db_key)
 
 
 def save_message(msg: Message) -> bool:

@@ -16,7 +16,7 @@ from signal_mcp.models import Contact, Group, GroupMember, Message, SendResult
 @pytest.fixture(autouse=True)
 def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(_store_mod, "DB_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(_store_mod, "_initialized", False)
+    monkeypatch.setattr(_store_mod, "_initialized_paths", set())
     if getattr(_store_mod._thread_local, "conn", None) is not None:
         _store_mod._thread_local.conn.close()
         _store_mod._thread_local.conn = None
