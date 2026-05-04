@@ -182,21 +182,25 @@ def search_messages(
         return []
     init_db()
     with _db() as conn:
-        sender_clause = "AND m.sender = ?" if sender else ""
+        fts_sender_clause  = "AND m.sender = ?" if sender else ""
+        like_sender_clause = "AND sender = ?"   if sender else ""
         sender_args = [sender] if sender else []
         try:
             rows = conn.execute(
                 f"""SELECT m.* FROM messages m
                    JOIN messages_fts f ON m.rowid = f.rowid
                    WHERE messages_fts MATCH ?
-                   {sender_clause}
+                   {fts_sender_clause}
                    ORDER BY m.timestamp DESC LIMIT ? OFFSET ?""",
                 [_safe_fts_query(query)] + sender_args + [limit, offset],
             ).fetchall()
         except Exception:
+            # Escape LIKE wildcards so literal % and _ in query don't over-match
+            like_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             rows = conn.execute(
-                f"SELECT * FROM messages WHERE body LIKE ? {sender_clause} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-                [f"%{query}%"] + sender_args + [limit, offset],
+                f"SELECT * FROM messages WHERE body LIKE ? ESCAPE '\\' {like_sender_clause}"
+                " ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                [f"%{like_query}%"] + sender_args + [limit, offset],
             ).fetchall()
         return _rows_to_messages(conn, rows)
 

@@ -1164,6 +1164,15 @@ async def test_tool_list_accounts():
     assert "+491739048003" in data
 
 
+@pytest.mark.asyncio
+async def test_list_accounts_not_daemon_free(monkeypatch):
+    """list_accounts calls signal-cli listAccounts and must NOT be in _DAEMON_FREE."""
+    import signal_mcp.server as server_mod
+    assert "list_accounts" not in server_mod._DAEMON_FREE, (
+        "list_accounts requires the daemon — it must not be in _DAEMON_FREE"
+    )
+
+
 # ── update_account ────────────────────────────────────────────────────────────
 
 @respx.mock

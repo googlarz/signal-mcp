@@ -22,12 +22,12 @@ _DAEMON_FREE = {
     "get_conversation", "search_messages", "get_own_number",
     "list_attachments", "get_attachment",
     "clear_local_store", "delete_local_messages", "export_messages",
-    "list_accounts", "prune_store", "mark_as_unread",
+    "prune_store", "mark_as_unread",
 }
-# get_unread and list_conversations need the daemon when no service is installed
-# (they call receive_messages first to freshen the store)
-# Note: get_configuration, update_configuration, list_sticker_packs, add_sticker_pack
-# all require the daemon (they call signal-cli JSON-RPC)
+# Tools NOT in _DAEMON_FREE call ensure_daemon() automatically before executing.
+# get_unread calls _freshen_store() (which may call receive_messages) if no
+# background service is running.
+# list_accounts, list_conversations, get_configuration etc. call signal-cli JSON-RPC.
 
 
 def get_client() -> SignalClient:

@@ -389,6 +389,37 @@ def test_search_messages_sender_none_returns_all():
     assert len(results) == 2
 
 
+def test_search_messages_like_fallback_sender_filter(monkeypatch):
+    """LIKE fallback must use unaliased column name (no 'm.sender') when sender is given.
+
+    Simulate FTS failure by making _safe_fts_query return a string that causes a
+    parse error in FTS5 — this forces the LIKE fallback branch.
+    """
+    import signal_mcp.store as store_mod
+    store.save_message(make_msg(id="fb1", sender="+1", body="fallback hello"))
+    store.save_message(make_msg(id="fb2", sender="+2", body="fallback hello"))
+    # Force the FTS branch to throw by injecting a broken query string
+    original = store_mod._safe_fts_query
+    monkeypatch.setattr(store_mod, "_safe_fts_query", lambda q: "INVALID FTS SYNTAX !!!@#")
+    results = store.search_messages("fallback", sender="+1")
+    monkeypatch.setattr(store_mod, "_safe_fts_query", original)
+    assert len(results) == 1
+    assert results[0].sender == "+1"
+
+
+def test_search_messages_like_fallback_wildcard_literal(monkeypatch):
+    """LIKE fallback must escape % and _ so they match literally."""
+    import signal_mcp.store as store_mod
+    store.save_message(make_msg(id="wc1", sender="+1", body="price 100% off"))
+    store.save_message(make_msg(id="wc2", sender="+1", body="price 100x off"))
+    monkeypatch.setattr(store_mod, "_safe_fts_query", lambda q: "INVALID FTS SYNTAX !!!@#")
+    results = store.search_messages("100%", sender=None)
+    monkeypatch.setattr(store_mod, "_safe_fts_query", store_mod._safe_fts_query)
+    # "100%" should only match the message with literal "%"
+    assert len(results) == 1
+    assert results[0].id == "wc1"
+
+
 # ── export_messages ───────────────────────────────────────────────────────────
 
 def test_export_messages_json_all():
