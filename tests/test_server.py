@@ -1252,20 +1252,10 @@ async def test_get_unread_with_service_no_warning(monkeypatch):
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_list_conversations_no_service_includes_warning(monkeypatch):
-    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: False)
+async def test_list_conversations_returns_list(monkeypatch):
+    """list_conversations returns a plain list — no freshen, no _warning."""
     respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([])))
     result = await call_tool("list_conversations", {})
     data = json.loads(result[0].text)
-    assert "_warning" in data
-    assert "conversations" in data
-
-
-@respx.mock
-@pytest.mark.asyncio
-async def test_list_conversations_with_service_no_warning(monkeypatch):
-    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: True)
-    result = await call_tool("list_conversations", {})
-    data = json.loads(result[0].text)
+    assert isinstance(data, list)
     assert "_warning" not in data
-    assert "conversations" in data

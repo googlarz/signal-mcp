@@ -1117,17 +1117,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "list_conversations":
             await client._ensure_contact_cache()
             await client._ensure_group_cache()
-            warning = await _freshen_store(client)
             conversations = await client.list_conversations()
             for conv in conversations:
                 if conv["type"] == "direct":
                     conv["name"] = client.resolve_name(conv["id"])
                 else:
                     conv["name"] = client.resolve_group_name(conv["id"])
-            result = {"conversations": conversations}
-            if warning:
-                result["_warning"] = warning
-            return _ok(result)
+            return _ok(conversations)
 
         elif name == "delete_message":
             await client.delete_message(arguments["recipient"], arguments["target_timestamp"])
@@ -1377,19 +1373,30 @@ _SERVICE_WARNING = (
     "Run 'signal-mcp install-service' to capture messages automatically in the background."
 )
 
+_FRESHEN_COOLDOWN = 30.0   # seconds — don't poll more than once per 30s
+_last_freshen_at: float = 0.0
+
 
 async def _freshen_store(client: SignalClient) -> str | None:
-    """Receive new messages from signal-cli if no background service is running.
+    """Poll signal-cli for new messages if no background service is running.
+
+    Debounced: skips the poll if one completed within the last 30 seconds,
+    so back-to-back tool calls (get_unread → list_conversations) only poll once.
 
     Returns a warning string when the service is absent, None when it is present.
-    The warning should be passed back to Claude so it can inform the user.
     """
+    global _last_freshen_at
     if is_service_installed():
         return None
+    import time
+    now = time.monotonic()
+    if now - _last_freshen_at < _FRESHEN_COOLDOWN:
+        return _SERVICE_WARNING  # still fresh from recent poll
     try:
-        await client.receive_messages(timeout=5)
+        await client.receive_messages(timeout=2)
+        _last_freshen_at = time.monotonic()
     except Exception:
-        pass  # already receiving, or daemon not ready — store is as fresh as it can be
+        pass  # service just started receiving, or daemon not ready — best effort
     return _SERVICE_WARNING
 
 
