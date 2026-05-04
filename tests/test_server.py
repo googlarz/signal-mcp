@@ -1198,3 +1198,26 @@ async def test_tool_remove_pin():
     result = await call_tool("remove_pin", {})
     data = json.loads(result[0].text)
     assert data["status"] == "PIN removed"
+
+
+# ── receive_messages falls back to store when service is running ──────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_receive_messages_service_conflict_falls_back(monkeypatch):
+    from signal_mcp.models import Message
+    from datetime import datetime
+    import signal_mcp.server as _srv
+
+    # Simulate "already being received" error from daemon
+    async def _fail_receive(*a, **kw):
+        from signal_mcp.client import SignalError
+        raise SignalError("Receive command cannot be used if messages are already being received.")
+
+    monkeypatch.setattr(_srv._client, "receive_messages", _fail_receive)
+
+    result = await call_tool("receive_messages", {})
+    data = json.loads(result[0].text)
+    assert "note" in data
+    assert "service" in data["note"].lower()
+    assert "messages" in data

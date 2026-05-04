@@ -370,24 +370,37 @@ Run both for complete coverage.
 ## Architecture
 
 ```
-Claude (Claude Code / Claude Desktop)        Terminal / scripts
-    │  MCP (stdio transport)                     │  signal-mcp <cmd>
-    ▼                                            ▼
-signal-mcp serve ──────────────────── signal-mcp CLI
-    │                                            │
-    └──────────────┬──────────────────────────── ┘
-                   │
-        ┌──────────┴───────────┐
-        │                      │
-   SQLite store          signal-cli daemon
-   (~/.local/share/       (JSON-RPC :7583)
-    signal-mcp/                │
-    messages.db)               │  Signal protocol
-   FTS5 search                 ▼
-                          Signal network
+                    ┌─────────────────────────────────┐
+                    │  signal-cli daemon  (:7583)      │
+                    │  Signal protocol / libsignal     │
+                    └──────────┬──────────────┬────────┘
+                               │ sends/receives│
+                    ┌──────────▼──────────┐   │ (when no service)
+                    │  background service  │   │
+                    │  LaunchAgent/systemd │   │
+                    └──────────┬──────────┘   │
+                               │ writes        │
+                    ┌──────────▼──────────────▼────────┐
+                    │  SQLite store                     │
+                    │  ~/.local/share/signal-mcp/       │
+                    │  messages.db  (FTS5 indexed)      │
+                    └────────────────┬─────────────────┘
+                                     │ reads/writes
+                   ┌─────────────────┼─────────────────┐
+                   │                 │                  │
+        ┌──────────▼──────┐ ┌────────▼───────┐ ┌──────▼──────────┐
+        │  Claude Code /  │ │  signal-mcp    │ │  signal-mcp CLI │
+        │  Claude Desktop │ │  serve (MCP)   │ │  (terminal)     │
+        │  (asks Claude)  │ └────────────────┘ └─────────────────┘
+        └─────────────────┘
 ```
 
-The signal-cli daemon starts automatically on first use and stays alive across tool calls. Received attachments are saved to `~/Downloads/signal-attachments/`.
+**Two modes, same store:**
+
+- **With background service** (`signal-mcp install-service`): the service continuously receives messages into the store. Claude and the CLI read from the store. `receive_messages` is not needed — use `get_unread`.
+- **Without service**: `receive_messages` polls signal-cli on demand. If called when the service is running, it automatically falls back to `get_unread` from the store.
+
+The daemon starts automatically on first use. Attachments are saved to `~/Downloads/signal-attachments/`.
 
 ## signal-cli Coverage
 

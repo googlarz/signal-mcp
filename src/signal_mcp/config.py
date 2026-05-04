@@ -122,3 +122,13 @@ def read_daemon_pid() -> int | None:
 
 def clear_daemon_pid() -> None:
     DAEMON_PID_FILE.unlink(missing_ok=True)
+
+
+# Background service paths (mirrors cli.py constants — kept here to avoid circular import)
+_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.signal-mcp.watch.plist"
+_SYSTEMD_PATH = Path.home() / ".config" / "systemd" / "user" / "signal-mcp-watch.service"
+
+
+def is_service_installed() -> bool:
+    """Return True if the background message-capture service is installed."""
+    return _PLIST_PATH.exists() or _SYSTEMD_PATH.exists()

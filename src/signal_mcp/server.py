@@ -121,7 +121,11 @@ TOOLS = [
     ),
     Tool(
         name="receive_messages",
-        description="Poll for new incoming Signal messages",
+        description=(
+            "Poll signal-cli for new incoming messages and store them locally. "
+            "Only needed if the background service (signal-mcp install-service) is NOT running. "
+            "If the service is running, use get_unread to read messages from the store instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -350,7 +354,7 @@ TOOLS = [
     ),
     Tool(
         name="get_unread",
-        description="Get messages not yet marked as read from local store",
+        description="Get all unread messages from the local store. This is the primary way to check for new messages — use this instead of receive_messages if the background service is running.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -936,8 +940,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 timeout = int(arguments.get("timeout", 5))
             except (TypeError, ValueError):
                 return _err("timeout must be an integer number of seconds")
-            messages = await client.receive_messages(timeout=timeout)
-            return _ok([client._enrich_message(m) for m in messages])
+            try:
+                messages = await client.receive_messages(timeout=timeout)
+                return _ok([client._enrich_message(m) for m in messages])
+            except Exception as e:
+                if "already being received" in str(e):
+                    # Background service is running — read from store instead
+                    from signal_mcp.store import get_unread_messages as _get_unread
+                    msgs = await asyncio.to_thread(_get_unread, client.account, 50)
+                    return _ok({
+                        "note": "Background service is running — returning unread messages from store instead.",
+                        "messages": [client._enrich_message(m) for m in msgs],
+                    })
+                raise
 
         elif name == "list_contacts":
             contacts = await client.list_contacts(search=arguments.get("search"))
@@ -1344,15 +1359,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return _err(f"Unexpected error: {e}")
 
 
+async def _initial_receive(client: "SignalClient") -> None:
+    """If no background service is installed, do one receive on startup to freshen the store."""
+    from signal_mcp.config import is_service_installed
+    if is_service_installed():
+        return
+    try:
+        await client.receive_messages(timeout=3)
+    except Exception:
+        pass  # best-effort; errors are non-fatal at startup
+
+
 async def serve() -> None:
     check_signal_cli_version()
     _store.init_db()
     client = get_client()
     # Pre-warm: start daemon in background so first tool call doesn't cold-start
     await client.prewarm()
-    # Pre-load contact names (best-effort; retries on first use if daemon not ready yet)
+    # Pre-load contact names and do an initial receive if no background service
     cache_task = asyncio.create_task(client._ensure_contact_cache())
     client._background_tasks.append(cache_task)
+    receive_task = asyncio.create_task(_initial_receive(client))
+    client._background_tasks.append(receive_task)
     # Watchdog: auto-restart daemon if it crashes
     watchdog_task = asyncio.create_task(client.watchdog())
     client._background_tasks.append(watchdog_task)
