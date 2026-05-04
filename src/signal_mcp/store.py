@@ -451,6 +451,28 @@ def export_messages(
     )
 
 
+def prune_old_messages(days: int = 180) -> int:
+    """Delete messages older than *days* days. Returns count deleted.
+
+    FTS and attachments are cleaned up too.  Default is 180 days (6 months).
+    """
+    if days <= 0:
+        raise ValueError("days must be a positive integer")
+    init_db()
+    cutoff_ms = int((datetime.now().timestamp() - days * 86400) * 1000)
+    with _db() as conn:
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM messages WHERE timestamp < ?", (cutoff_ms,)
+        ).fetchall()]
+        if not ids:
+            return 0
+        ph = ",".join("?" * len(ids))
+        conn.execute(f"DELETE FROM attachments WHERE message_id IN ({ph})", ids)
+        conn.execute(f"DELETE FROM messages WHERE id IN ({ph})", ids)
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    return len(ids)
+
+
 def get_stats() -> dict:
     init_db()
     with _db() as conn:

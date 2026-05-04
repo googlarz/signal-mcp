@@ -22,7 +22,7 @@ _DAEMON_FREE = {
     "get_conversation", "search_messages", "get_own_number",
     "list_attachments", "get_attachment",
     "clear_local_store", "delete_local_messages", "export_messages",
-    "list_accounts",
+    "list_accounts", "prune_store",
 }
 # get_unread and list_conversations need the daemon when no service is installed
 # (they call receive_messages first to freshen the store)
@@ -822,6 +822,66 @@ TOOLS += [
         description="Remove the Signal registration lock PIN.",
         inputSchema={"type": "object", "properties": {}},
     ),
+    Tool(
+        name="start_change_number",
+        description=(
+            "Begin a phone number change. Signal sends a verification code to the new number via SMS "
+            "(or voice if voice=true). Call finish_change_number to complete. Requires a captcha token "
+            "if Signal rejects the request — solve it at https://signalcaptchas.org/challenge/generate.html"
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "number":  {"type": "string", "description": "New phone number in E.164 format (e.g. +12025551234)"},
+                "voice":   {"type": "boolean", "description": "Request code via voice call instead of SMS (default: false)"},
+                "captcha": {"type": "string",  "description": "Captcha token (required only if Signal demands it)"},
+            },
+            "required": ["number"],
+        },
+    ),
+    Tool(
+        name="finish_change_number",
+        description="Complete a phone number change using the verification code received via SMS or voice.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "number":            {"type": "string", "description": "The new phone number in E.164 format"},
+                "verification_code": {"type": "string", "description": "6-digit verification code from SMS/voice"},
+                "pin":               {"type": "string", "description": "Registration lock PIN (required if the account has a PIN set)"},
+            },
+            "required": ["number", "verification_code"],
+        },
+    ),
+    Tool(
+        name="submit_rate_limit_challenge",
+        description=(
+            "Unblock the account after Signal applies a rate limit. "
+            "Provide the challenge token from the error and a solved captcha from "
+            "https://signalcaptchas.org/challenge/generate.html"
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "challenge": {"type": "string", "description": "Challenge token from the rate-limit error"},
+                "captcha":   {"type": "string", "description": "Solved captcha token from the Signal captcha page"},
+            },
+            "required": ["challenge", "captcha"],
+        },
+    ),
+    Tool(
+        name="prune_store",
+        description=(
+            "Delete locally stored messages older than a given number of days (default: 180). "
+            "Does NOT delete messages from Signal servers — only the local history cache. "
+            "Useful for keeping the store from growing unbounded."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "Delete messages older than this many days (default: 180)", "default": 180},
+            },
+        },
+    ),
 ]
 
 
@@ -886,6 +946,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "create_poll":                    ["question", "options"],
             "vote_poll":                      ["target_author", "target_timestamp", "poll_id", "votes"],
             "terminate_poll":                 ["target_author", "target_timestamp", "poll_id"],
+            "start_change_number":            ["number"],
+            "finish_change_number":           ["number", "verification_code"],
+            "submit_rate_limit_challenge":    ["challenge", "captcha"],
         }
         if name in _REQUIRED:
             err = _require(arguments, *_REQUIRED[name])
@@ -1359,6 +1422,36 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
             return _ok({"format": fmt, "data": data})
 
+        elif name == "prune_store":
+            days = int(arguments.get("days", 180))
+            if days <= 0:
+                return _err("days must be a positive integer")
+            count = await asyncio.to_thread(_store.prune_old_messages, days)
+            return _ok({"deleted": count, "older_than_days": days})
+
+        elif name == "start_change_number":
+            await client.start_change_number(
+                number=arguments["number"],
+                voice=arguments.get("voice", False),
+                captcha=arguments.get("captcha"),
+            )
+            return _ok({"status": "verification code sent", "number": arguments["number"]})
+
+        elif name == "finish_change_number":
+            await client.finish_change_number(
+                number=arguments["number"],
+                verification_code=arguments["verification_code"],
+                pin=arguments.get("pin"),
+            )
+            return _ok({"status": "number changed", "number": arguments["number"]})
+
+        elif name == "submit_rate_limit_challenge":
+            await client.submit_rate_limit_challenge(
+                challenge=arguments["challenge"],
+                captcha=arguments["captcha"],
+            )
+            return _ok({"status": "challenge submitted"})
+
         else:
             return _err(f"Unknown tool: {name}")
 
@@ -1392,9 +1485,9 @@ async def _freshen_store(client: SignalClient) -> str | None:
     now = time.monotonic()
     if now - _last_freshen_at < _FRESHEN_COOLDOWN:
         return _SERVICE_WARNING  # still fresh from recent poll
+    _last_freshen_at = now   # stamp BEFORE the await — concurrent calls see it as in-flight
     try:
         await client.receive_messages(timeout=2)
-        _last_freshen_at = time.monotonic()
     except Exception:
         pass  # service just started receiving, or daemon not ready — best effort
     return _SERVICE_WARNING

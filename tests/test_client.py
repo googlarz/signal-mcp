@@ -1501,3 +1501,55 @@ async def test_remove_pin(client):
     await client.remove_pin()
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "removePin"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_start_change_number(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.start_change_number("+12025551234")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "startChangeNumber"
+    assert req_body["params"]["number"] == "+12025551234"
+    assert "voice" not in req_body["params"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_start_change_number_voice_captcha(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.start_change_number("+12025551234", voice=True, captcha="token")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["voice"] is True
+    assert req_body["params"]["captcha"] == "token"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_finish_change_number(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.finish_change_number("+12025551234", "654321")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "finishChangeNumber"
+    assert req_body["params"]["verificationCode"] == "654321"
+    assert "pin" not in req_body["params"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_finish_change_number_with_pin(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.finish_change_number("+12025551234", "654321", pin="9876")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["pin"] == "9876"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_submit_rate_limit_challenge(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.submit_rate_limit_challenge("abc123", "signalcaptcha://token")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "submitRateLimitChallenge"
+    assert req_body["params"]["challenge"] == "abc123"
+    assert req_body["params"]["captcha"] == "signalcaptcha://token"

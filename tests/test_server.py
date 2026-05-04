@@ -1259,3 +1259,82 @@ async def test_list_conversations_returns_list(monkeypatch):
     data = json.loads(result[0].text)
     assert isinstance(data, list)
     assert "_warning" not in data
+
+
+# ── prune_store ───────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_prune_store_calls_store(monkeypatch):
+    monkeypatch.setattr(_store_mod, "prune_old_messages", lambda days: 42)
+    result = await call_tool("prune_store", {"days": 90})
+    data = json.loads(result[0].text)
+    assert data["deleted"] == 42
+    assert data["older_than_days"] == 90
+
+
+@pytest.mark.asyncio
+async def test_prune_store_default_days(monkeypatch):
+    captured = {}
+    def fake_prune(days):
+        captured["days"] = days
+        return 0
+    monkeypatch.setattr(_store_mod, "prune_old_messages", fake_prune)
+    await call_tool("prune_store", {})
+    assert captured["days"] == 180
+
+
+@pytest.mark.asyncio
+async def test_prune_store_rejects_zero_days():
+    result = await call_tool("prune_store", {"days": 0})
+    assert result[0].text.startswith("Error:")
+
+
+# ── start/finish_change_number + submit_rate_limit_challenge ──────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_start_change_number():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("start_change_number", {"number": "+12025551234"})
+    data = json.loads(result[0].text)
+    assert data["status"] == "verification code sent"
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "startChangeNumber"
+    assert req_body["params"]["number"] == "+12025551234"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_start_change_number_voice():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await call_tool("start_change_number", {"number": "+12025551234", "voice": True})
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["voice"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_finish_change_number():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("finish_change_number", {
+        "number": "+12025551234", "verification_code": "123456"
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "number changed"
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "finishChangeNumber"
+    assert req_body["params"]["verificationCode"] == "123456"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_submit_rate_limit_challenge():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("submit_rate_limit_challenge", {
+        "challenge": "abc123", "captcha": "signalcaptcha://token"
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "challenge submitted"
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "submitRateLimitChallenge"
+    assert req_body["params"]["challenge"] == "abc123"

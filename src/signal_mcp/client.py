@@ -1229,3 +1229,32 @@ class SignalClient:
         else:
             params["trustAllKnownKeys"] = trust_all_known
         await self._rpc("trust", params)
+
+    # ── Account / number change ───────────────────────────────────────────────
+
+    async def start_change_number(
+        self, number: str, voice: bool = False, captcha: str | None = None
+    ) -> None:
+        """Initiate a phone number change. Signal will send a verification code."""
+        params: dict = {"number": number}
+        if voice:
+            params["voice"] = True
+        if captcha:
+            params["captcha"] = captcha
+        await self._rpc("startChangeNumber", params)
+
+    async def finish_change_number(
+        self, number: str, verification_code: str, pin: str | None = None
+    ) -> None:
+        """Complete a phone number change using the verification code."""
+        params: dict = {"number": number, "verificationCode": verification_code}
+        if pin:
+            params["pin"] = pin
+        await self._rpc("finishChangeNumber", params)
+
+    async def submit_rate_limit_challenge(self, challenge: str, captcha: str) -> None:
+        """Submit a rate-limit challenge token + solved captcha to unblock the account."""
+        await self._rpc("submitRateLimitChallenge", {
+            "challenge": challenge,
+            "captcha": captcha,
+        })
