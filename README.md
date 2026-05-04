@@ -21,8 +21,6 @@ Everything runs locally via [signal-cli](https://github.com/AsamK/signal-cli). N
 
 **Manual daemon management.** signal-mcp auto-starts the daemon on first use, restarts it if it crashes, and can install a background service (macOS LaunchAgent or Linux systemd) that captures every incoming message — even when you're not at your computer.
 
-**No Claude.** signal-mcp is an MCP server. Claude can read your conversations, understand context, draft replies, and take action. A CLI pipe can't do that.
-
 ## CLI and MCP: use whichever fits the task
 
 The CLI and MCP server share the same store and daemon. You don't have to choose one:
