@@ -9,7 +9,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from .client import SignalClient, SignalError
-from .config import check_signal_cli_version
+from .config import check_signal_cli_version, is_service_installed
 from . import store as _store
 
 app = Server("signal-mcp")
@@ -18,12 +18,14 @@ _client: SignalClient | None = None
 
 # Tools that don't need the signal-cli daemon (read from local store only)
 _DAEMON_FREE = {
-    "import_desktop", "store_stats", "list_conversations",
-    "get_conversation", "search_messages", "get_unread", "get_own_number",
+    "import_desktop", "store_stats",
+    "get_conversation", "search_messages", "get_own_number",
     "list_attachments", "get_attachment",
     "clear_local_store", "delete_local_messages", "export_messages",
     "list_accounts",
 }
+# get_unread and list_conversations need the daemon when no service is installed
+# (they call receive_messages first to freshen the store)
 # Note: get_configuration, update_configuration, list_sticker_packs, add_sticker_pack
 # all require the daemon (they call signal-cli JSON-RPC)
 
@@ -122,9 +124,9 @@ TOOLS = [
     Tool(
         name="receive_messages",
         description=(
-            "Poll signal-cli for new incoming messages and store them locally. "
-            "Only needed if the background service (signal-mcp install-service) is NOT running. "
-            "If the service is running, use get_unread to read messages from the store instead."
+            "Manually poll signal-cli for new messages and store them. "
+            "Prefer get_unread — it does this automatically and returns results in one call. "
+            "Use receive_messages only if you want to poll without reading results."
         ),
         inputSchema={
             "type": "object",
@@ -354,7 +356,11 @@ TOOLS = [
     ),
     Tool(
         name="get_unread",
-        description="Get all unread messages from the local store. This is the primary way to check for new messages — use this instead of receive_messages if the background service is running.",
+        description=(
+            "Get new unread messages. If the background service (signal-mcp install-service) is running, "
+            "reads directly from the local store. Otherwise polls signal-cli first to fetch any messages "
+            "that arrived since the last check, then returns unread. Always use this to check for new messages."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1090,8 +1096,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "get_unread":
             await client._ensure_contact_cache()
+            warning = await _freshen_store(client)
             messages = await client.get_unread_messages(limit=arguments.get("limit", 50))
-            return _ok([client._enrich_message(m) for m in messages])
+            result: dict = {"messages": [client._enrich_message(m) for m in messages]}
+            if warning:
+                result["_warning"] = warning
+            return _ok(result)
 
         elif name == "store_stats":
             return _ok(_store.get_stats())
@@ -1107,14 +1117,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "list_conversations":
             await client._ensure_contact_cache()
             await client._ensure_group_cache()
+            warning = await _freshen_store(client)
             conversations = await client.list_conversations()
-            # Enrich with human-readable names
             for conv in conversations:
                 if conv["type"] == "direct":
                     conv["name"] = client.resolve_name(conv["id"])
                 else:
                     conv["name"] = client.resolve_group_name(conv["id"])
-            return _ok(conversations)
+            result = {"conversations": conversations}
+            if warning:
+                result["_warning"] = warning
+            return _ok(result)
 
         elif name == "delete_message":
             await client.delete_message(arguments["recipient"], arguments["target_timestamp"])
@@ -1359,15 +1372,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return _err(f"Unexpected error: {e}")
 
 
-async def _initial_receive(client: "SignalClient") -> None:
-    """If no background service is installed, do one receive on startup to freshen the store."""
-    from signal_mcp.config import is_service_installed
+_SERVICE_WARNING = (
+    "Background service is not installed. Messages are only captured when this tool is called. "
+    "Run 'signal-mcp install-service' to capture messages automatically in the background."
+)
+
+
+async def _freshen_store(client: SignalClient) -> str | None:
+    """Receive new messages from signal-cli if no background service is running.
+
+    Returns a warning string when the service is absent, None when it is present.
+    The warning should be passed back to Claude so it can inform the user.
+    """
     if is_service_installed():
-        return
+        return None
     try:
-        await client.receive_messages(timeout=3)
+        await client.receive_messages(timeout=5)
     except Exception:
-        pass  # best-effort; errors are non-fatal at startup
+        pass  # already receiving, or daemon not ready — store is as fresh as it can be
+    return _SERVICE_WARNING
 
 
 async def serve() -> None:
@@ -1376,11 +1399,9 @@ async def serve() -> None:
     client = get_client()
     # Pre-warm: start daemon in background so first tool call doesn't cold-start
     await client.prewarm()
-    # Pre-load contact names and do an initial receive if no background service
+    # Pre-load contact + group names in background
     cache_task = asyncio.create_task(client._ensure_contact_cache())
     client._background_tasks.append(cache_task)
-    receive_task = asyncio.create_task(_initial_receive(client))
-    client._background_tasks.append(receive_task)
     # Watchdog: auto-restart daemon if it crashes
     watchdog_task = asyncio.create_task(client.watchdog())
     client._background_tasks.append(watchdog_task)

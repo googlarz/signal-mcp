@@ -395,10 +395,9 @@ Run both for complete coverage.
         └─────────────────┘
 ```
 
-**Two modes, same store:**
+**How it works:**
 
-- **With background service** (`signal-mcp install-service`): the service continuously receives messages into the store. Claude and the CLI read from the store. `receive_messages` is not needed — use `get_unread`.
-- **Without service**: `receive_messages` polls signal-cli on demand. If called when the service is running, it automatically falls back to `get_unread` from the store.
+`get_unread` and `list_conversations` are the primary "check for new messages" tools. Both automatically poll signal-cli for new messages before reading the store — so they're always fresh regardless of when the last check was. If the background service is installed, the poll is skipped (the service already keeps the store up to date) and a warning is omitted. If no service is installed, both tools include a `_warning` field telling Claude to suggest `signal-mcp install-service` to the user.
 
 The daemon starts automatically on first use. Attachments are saved to `~/Downloads/signal-attachments/`.
 

@@ -1221,3 +1221,51 @@ async def test_tool_receive_messages_service_conflict_falls_back(monkeypatch):
     assert "note" in data
     assert "service" in data["note"].lower()
     assert "messages" in data
+
+
+# ── _freshen_store / service-aware get_unread ─────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_unread_no_service_includes_warning(monkeypatch):
+    import signal_mcp.server as _srv
+    from signal_mcp.config import is_service_installed
+    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: False)
+    # receive_messages succeeds (no service running conflict)
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([])))
+    result = await call_tool("get_unread", {})
+    data = json.loads(result[0].text)
+    assert "_warning" in data
+    assert "install-service" in data["_warning"]
+    assert "messages" in data
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_unread_with_service_no_warning(monkeypatch):
+    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: True)
+    result = await call_tool("get_unread", {})
+    data = json.loads(result[0].text)
+    assert "_warning" not in data
+    assert "messages" in data
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_conversations_no_service_includes_warning(monkeypatch):
+    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: False)
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([])))
+    result = await call_tool("list_conversations", {})
+    data = json.loads(result[0].text)
+    assert "_warning" in data
+    assert "conversations" in data
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_conversations_with_service_no_warning(monkeypatch):
+    monkeypatch.setattr("signal_mcp.server.is_service_installed", lambda: True)
+    result = await call_tool("list_conversations", {})
+    data = json.loads(result[0].text)
+    assert "_warning" not in data
+    assert "conversations" in data
