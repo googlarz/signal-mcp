@@ -470,3 +470,20 @@ def test_search_messages_offset():
 def test_search_messages_offset_beyond_end():
     store.save_message(make_msg(id="o3", sender="+1", body="thing"))
     assert store.search_messages("thing", limit=10, offset=99) == []
+
+
+# ── mark_as_unread ────────────────────────────────────────────────────────────
+
+def test_mark_as_unread():
+    store.save_message(make_msg(id="u1", sender="+1"))
+    store.mark_as_read(["u1"])
+    msgs = store.search_messages("hello")
+    assert msgs[0].is_read is True
+    store.mark_as_unread(["u1"])
+    msgs = store.search_messages("hello")
+    assert msgs[0].is_read is False
+
+
+def test_mark_as_unread_noop_empty():
+    store.init_db()
+    store.mark_as_unread([])  # should not raise

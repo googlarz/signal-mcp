@@ -406,6 +406,93 @@ def export_cmd(output: str, fmt: str, recipient: str | None, since: str | None):
         click.echo(f"Exported to {output}")
 
 
+# ── pin / unpin ───────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("target")          # phone number or group_id
+@click.argument("timestamp", type=int)
+@click.argument("author")
+def pin(target: str, timestamp: int, author: str):
+    """Pin a message. TARGET is a phone number or group ID."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            is_group = not target.startswith("+")
+            await client.pin_message(
+                author, timestamp,
+                group_id=target if is_group else None,
+                recipient=target if not is_group else None,
+            )
+            click.echo(f"Pinned message {timestamp} in {target}.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("target")
+@click.argument("timestamp", type=int)
+@click.argument("author")
+def unpin(target: str, timestamp: int, author: str):
+    """Unpin a message. TARGET is a phone number or group ID."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            is_group = not target.startswith("+")
+            await client.unpin_message(
+                author, timestamp,
+                group_id=target if is_group else None,
+                recipient=target if not is_group else None,
+            )
+            click.echo(f"Unpinned message {timestamp} in {target}.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── admin-delete ──────────────────────────────────────────────────────────────
+
+@cli.command("admin-delete")
+@click.argument("group_id")
+@click.argument("timestamp", type=int)
+@click.argument("author")
+def admin_delete(group_id: str, timestamp: int, author: str):
+    """Admin-delete a message in a group you administer."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            await client.admin_delete_message(author, timestamp, group_id)
+            click.echo(f"Admin-deleted message {timestamp} from {author} in {group_id}.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── update-device ─────────────────────────────────────────────────────────────
+
+@cli.command("update-device")
+@click.argument("device_id", type=int)
+@click.argument("name")
+def update_device_cmd(device_id: int, name: str):
+    """Rename a linked device."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            await client.update_device(device_id, name)
+            click.echo(f"Device {device_id} renamed to '{name}'.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 # ── install-service ───────────────────────────────────────────────────────────
 
 PLIST_LABEL = "com.signal-mcp.watch"

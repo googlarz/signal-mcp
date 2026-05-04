@@ -93,6 +93,11 @@ _contact_cache_loaded: bool = False
 _contact_cache_at: float = 0.0
 _CACHE_TTL: float = 300.0  # refresh every 5 minutes
 
+# Module-level group name cache: group_id → group_name
+_group_cache: dict[str, str] = {}
+_group_cache_loaded: bool = False
+_group_cache_at: float = 0.0
+
 
 class SignalClient:
     def __init__(self, account: str | None = None, daemon_url: str = DAEMON_URL):
@@ -209,6 +214,19 @@ class SignalClient:
         task = asyncio.create_task(self.ensure_daemon())
         self._background_tasks.append(task)
         task.add_done_callback(lambda t: self._background_tasks.remove(t) if t in self._background_tasks else None)
+        # Also start the watchdog (idempotent — starts only once)
+        self._start_watchdog()
+
+    def _start_watchdog(self) -> None:
+        """Start the daemon watchdog background task exactly once."""
+        # Check if a watchdog is already running
+        for t in self._background_tasks:
+            if not t.done() and getattr(t, "_is_watchdog", False):
+                return
+        task = asyncio.create_task(self.watchdog())
+        task._is_watchdog = True  # type: ignore[attr-defined]
+        self._background_tasks.append(task)
+        task.add_done_callback(lambda t: self._background_tasks.remove(t) if t in self._background_tasks else None)
 
     async def watchdog(self) -> None:
         """Periodically check daemon health and restart if dead. Runs forever."""
@@ -313,12 +331,17 @@ class SignalClient:
         return await self.send_message(self.account, message)
 
     async def send_attachment(
-        self, recipient: str, path: str, caption: str = "", view_once: bool = False
+        self,
+        recipient: str,
+        path: str | list[str],
+        caption: str = "",
+        view_once: bool = False,
     ) -> SendResult:
         _validate_e164(recipient)
         await self._rate_limiter.acquire()
-        resolved = str(Path(path).expanduser().resolve())
-        params: dict = {"recipient": [recipient], "attachment": [resolved]}
+        paths = [path] if isinstance(path, str) else path
+        resolved = [str(Path(p).expanduser().resolve()) for p in paths]
+        params: dict = {"recipient": [recipient], "attachment": resolved}
         if caption:
             params["message"] = caption
         if view_once:
@@ -335,11 +358,16 @@ class SignalClient:
         return SendResult(timestamp=ts, recipient=recipient, success=True)
 
     async def send_group_attachment(
-        self, group_id: str, path: str, caption: str = "", view_once: bool = False
+        self,
+        group_id: str,
+        path: str | list[str],
+        caption: str = "",
+        view_once: bool = False,
     ) -> SendResult:
         await self._rate_limiter.acquire()
-        resolved = str(Path(path).expanduser().resolve())
-        params: dict = {"groupId": group_id, "attachment": [resolved]}
+        paths = [path] if isinstance(path, str) else path
+        resolved = [str(Path(p).expanduser().resolve()) for p in paths]
+        params: dict = {"groupId": group_id, "attachment": resolved}
         if caption:
             params["message"] = caption
         if view_once:
@@ -518,6 +546,10 @@ class SignalClient:
         if not data_message:
             return None
 
+        # Reaction envelopes: someone reacted to a message — don't store as text
+        if data_message.get("reaction"):
+            return None
+
         attachments = self._parse_attachments(data_message)
         ts_ms = data_message.get("timestamp", ts_ms)
         quote = data_message.get("quote") or {}
@@ -529,6 +561,8 @@ class SignalClient:
             attachments=attachments,
             group_id=data_message.get("groupInfo", {}).get("groupId"),
             quote_id=str(quote["id"]) if quote.get("id") else None,
+            expires_in_seconds=data_message.get("expiresInSeconds") or None,
+            view_once=bool(data_message.get("viewOnce", False)),
         )
 
     def _parse_attachments(self, data_message: dict) -> list[Attachment]:
@@ -548,6 +582,9 @@ class SignalClient:
                 filename=att.get("filename", ""),
                 local_path=local_path,
                 size=att.get("size"),
+                width=att.get("width"),
+                height=att.get("height"),
+                caption=att.get("caption"),
             ))
         return attachments
 
@@ -575,16 +612,38 @@ class SignalClient:
         except Exception:
             pass  # will retry on next call
 
+    async def _ensure_group_cache(self) -> None:
+        """Load group names into module-level cache (TTL same as contact cache)."""
+        global _group_cache, _group_cache_loaded, _group_cache_at
+        now = time.monotonic()
+        if _group_cache_loaded and (now - _group_cache_at) < _CACHE_TTL:
+            return
+        try:
+            groups = await self.list_groups()
+            for g in groups:
+                if g.id:
+                    _group_cache[g.id] = g.name or g.id
+            _group_cache_loaded = True
+            _group_cache_at = time.monotonic()
+        except Exception:
+            pass
+
     def resolve_name(self, number: str) -> str:
         """Return display name for a number, or the number itself if unknown."""
         return _contact_cache.get(number, number)
 
+    def resolve_group_name(self, group_id: str) -> str:
+        """Return group name for a group_id, or the group_id itself if unknown."""
+        return _group_cache.get(group_id, group_id)
+
     def _enrich_message(self, msg: Message) -> dict:
-        """Convert message to dict and replace numbers with display names."""
+        """Convert message to dict and add resolved display names."""
         d = msg.to_dict()
         d["sender_name"] = self.resolve_name(msg.sender)
         if msg.recipient:
             d["recipient_name"] = self.resolve_name(msg.recipient)
+        if msg.group_id:
+            d["group_name"] = self.resolve_group_name(msg.group_id)
         return d
 
     # ── Contacts ──────────────────────────────────────────────────────────────
@@ -708,8 +767,9 @@ class SignalClient:
         expiration_seconds: int | None = None,
         add_admins: list[str] | None = None,
         remove_admins: list[str] | None = None,
+        link_mode: str | None = None,
     ) -> None:
-        """Update group properties (name, description, members, admins, expiry timer)."""
+        """Update group properties (name, description, members, admins, expiry timer, invite link)."""
         params: dict = {"groupId": group_id}
         if name is not None:
             params["name"] = name
@@ -725,6 +785,9 @@ class SignalClient:
             params["admin"] = add_admins
         if remove_admins:
             params["removeAdmin"] = remove_admins
+        if link_mode is not None:
+            # Values: "disabled", "enabled", "enabled-with-approval", "reset"
+            params["link"] = link_mode
         await self._rpc("updateGroup", params)
 
     async def join_group(self, uri: str) -> dict:
@@ -981,6 +1044,117 @@ class SignalClient:
     async def update_device(self, device_id: int, name: str) -> None:
         """Rename a linked device."""
         await self._rpc("updateDevice", {"deviceId": device_id, "name": name})
+
+    # ── Local store extras ────────────────────────────────────────────────────
+
+    async def mark_as_unread(self, message_ids: list[str]) -> None:
+        """Mark messages as unread in the local store."""
+        await asyncio.to_thread(_store.mark_as_unread, message_ids)
+
+    # ── Avatar ────────────────────────────────────────────────────────────────
+
+    async def get_avatar(self, identifier: str) -> str:
+        """Get avatar for a contact (phone number) or group (group_id) as base64.
+
+        Returns the base64-encoded image string, or empty string if none.
+        """
+        # signal-cli distinguishes contact avatars vs group avatars by param name
+        if identifier.startswith("+"):
+            result = await self._rpc("getAvatar", {"recipient": identifier})
+        else:
+            result = await self._rpc("getAvatar", {"groupId": identifier})
+        if isinstance(result, dict):
+            return result.get("base64", "") or ""
+        return str(result) if result else ""
+
+    # ── Message requests ──────────────────────────────────────────────────────
+
+    async def send_message_request_response(
+        self, sender: str, accept: bool
+    ) -> None:
+        """Accept or decline a message request from an unknown contact.
+
+        Signal requires this before you can reply to someone not in your contacts.
+        accept=True to accept (start chatting), accept=False to decline/block.
+        """
+        await self._rpc("sendMessageRequestResponse", {
+            "recipient": [sender],
+            "type": "accept" if accept else "delete",
+        })
+
+    # ── Polls ─────────────────────────────────────────────────────────────────
+
+    async def create_poll(
+        self,
+        question: str,
+        options: list[str],
+        recipient: str | None = None,
+        group_id: str | None = None,
+        multi_select: bool = False,
+    ) -> SendResult:
+        """Create a poll and send it to a contact or group."""
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        await self._rate_limiter.acquire()
+        params: dict = {
+            "poll-question": question,
+            "poll-options": options,
+        }
+        if multi_select:
+            params["poll-multi-select"] = True
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        result = await self._rpc("sendPollCreate", params)
+        ts = result.get("timestamp", int(time.time() * 1000)) if isinstance(result, dict) else int(time.time() * 1000)
+        return SendResult(timestamp=ts, recipient=group_id or recipient or "", success=True)
+
+    async def vote_poll(
+        self,
+        target_author: str,
+        target_timestamp: int,
+        poll_id: int,
+        votes: list[int],
+        recipient: str | None = None,
+        group_id: str | None = None,
+    ) -> None:
+        """Vote on an existing poll."""
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {
+            "targetAuthor": target_author,
+            "targetTimestamp": target_timestamp,
+            "poll-id": poll_id,
+            "poll-answer": votes,
+        }
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        await self._rpc("sendPollVote", params)
+
+    async def terminate_poll(
+        self,
+        target_author: str,
+        target_timestamp: int,
+        poll_id: int,
+        recipient: str | None = None,
+        group_id: str | None = None,
+    ) -> None:
+        """Terminate (end) a poll you created."""
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {
+            "targetAuthor": target_author,
+            "targetTimestamp": target_timestamp,
+            "poll-id": poll_id,
+        }
+        if group_id:
+            params["groupId"] = group_id
+        else:
+            params["recipient"] = [recipient]
+        await self._rpc("sendPollTerminate", params)
 
     # ── Identity / safety numbers ─────────────────────────────────────────────
 

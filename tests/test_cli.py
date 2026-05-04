@@ -410,3 +410,49 @@ def test_receive_empty(runner):
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert result.exit_code == 0
+
+
+# ── pin / unpin ───────────────────────────────────────────────────────────────
+
+def test_pin_group(runner):
+    client = _mock_client()
+    client.pin_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["pin", "grp==", "1234567890", "+1"])
+    assert result.exit_code == 0
+    assert "Pinned" in result.output
+    client.pin_message.assert_called_once_with("+1", 1234567890, group_id="grp==", recipient=None)
+
+
+def test_unpin_dm(runner):
+    client = _mock_client()
+    client.unpin_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["unpin", "+19999999999", "1234567890", "+1"])
+    assert result.exit_code == 0
+    assert "Unpinned" in result.output
+    client.unpin_message.assert_called_once_with("+1", 1234567890, group_id=None, recipient="+19999999999")
+
+
+# ── admin-delete ──────────────────────────────────────────────────────────────
+
+def test_admin_delete(runner):
+    client = _mock_client()
+    client.admin_delete_message = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["admin-delete", "grp==", "1234567890", "+1"])
+    assert result.exit_code == 0
+    assert "Admin-deleted" in result.output
+    client.admin_delete_message.assert_called_once_with("+1", 1234567890, "grp==")
+
+
+# ── update-device ─────────────────────────────────────────────────────────────
+
+def test_update_device_cmd(runner):
+    client = _mock_client()
+    client.update_device = AsyncMock()
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        result = runner.invoke(cli, ["update-device", "2", "My Mac"])
+    assert result.exit_code == 0
+    assert "renamed" in result.output
+    client.update_device.assert_called_once_with(2, "My Mac")

@@ -1205,3 +1205,195 @@ async def test_update_device(client):
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "updateDevice"
     assert req_body["params"]["name"] == "My Mac"
+
+
+# ── reaction envelope skip ────────────────────────────────────────────────────
+
+def test_parse_envelope_reaction_skipped(client):
+    """dataMessage.reaction envelopes are not stored as messages."""
+    envelope = {
+        "envelope": {
+            "source": "+19999999999",
+            "timestamp": 1717200000000,
+            "dataMessage": {
+                "timestamp": 1717200000000,
+                "reaction": {
+                    "emoji": "👍",
+                    "targetAuthor": "+10000000000",
+                    "targetTimestamp": 1717100000000,
+                    "isRemove": False,
+                }
+            }
+        }
+    }
+    msg = client._parse_envelope(envelope)
+    assert msg is None
+
+
+# ── expiresInSeconds + viewOnce captured ─────────────────────────────────────
+
+def test_parse_envelope_expiry_and_view_once(client):
+    envelope = {
+        "envelope": {
+            "source": "+19999999999",
+            "timestamp": 1717200000000,
+            "dataMessage": {
+                "timestamp": 1717200000000,
+                "message": "disappearing",
+                "expiresInSeconds": 86400,
+                "viewOnce": True,
+                "attachments": [],
+            }
+        }
+    }
+    msg = client._parse_envelope(envelope)
+    assert msg is not None
+    assert msg.expires_in_seconds == 86400
+    assert msg.view_once is True
+
+
+# ── attachment width/height/caption ──────────────────────────────────────────
+
+def test_parse_attachments_metadata(client):
+    data_message = {
+        "attachments": [{
+            "contentType": "image/jpeg",
+            "filename": "/tmp/photo.jpg",
+            "size": 12345,
+            "width": 1920,
+            "height": 1080,
+            "caption": "Look at this!",
+        }]
+    }
+    atts = client._parse_attachments(data_message)
+    assert len(atts) == 1
+    assert atts[0].width == 1920
+    assert atts[0].height == 1080
+    assert atts[0].caption == "Look at this!"
+
+
+# ── send_attachment multiple paths ───────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_attachment_multiple_paths(client, tmp_path):
+    f1 = tmp_path / "a.txt"
+    f2 = tmp_path / "b.txt"
+    f1.write_text("x")
+    f2.write_text("y")
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 999})))
+    result = await client.send_attachment("+19999999999", [str(f1), str(f2)])
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert len(req_body["params"]["attachment"]) == 2
+    assert result.timestamp == 999
+
+
+# ── mark_as_unread ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_mark_as_unread_client(client):
+    import signal_mcp.store as _store_mod
+    from signal_mcp.models import Message
+    from datetime import datetime
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="mu1", sender="+1", body="hi",
+                                    timestamp=datetime(2024, 1, 1)))
+    _store_mod.mark_as_read(["mu1"])
+    await client.mark_as_unread(["mu1"])
+    msgs = _store_mod.get_unread_messages(own_number="+99")
+    assert any(m.id == "mu1" for m in msgs)
+
+
+# ── get_avatar ────────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_avatar_contact(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "abc123"})))
+    result = await client.get_avatar("+19999999999")
+    assert result == "abc123"
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "getAvatar"
+    assert "recipient" in req_body["params"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_avatar_group(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "xyz"})))
+    result = await client.get_avatar("grp==")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert "groupId" in req_body["params"]
+
+
+# ── send_message_request_response ────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_message_request_accept(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.send_message_request_response("+19999999999", accept=True)
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendMessageRequestResponse"
+    assert req_body["params"]["type"] == "accept"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_message_request_decline(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.send_message_request_response("+19999999999", accept=False)
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["params"]["type"] == "delete"
+
+
+# ── polls ─────────────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_create_poll_group(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 555})))
+    result = await client.create_poll("Best day?", ["Mon", "Fri"], group_id="grp==")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendPollCreate"
+    assert req_body["params"]["poll-question"] == "Best day?"
+    assert result.timestamp == 555
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_vote_poll(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.vote_poll("+1", 123, poll_id=1, votes=[0], group_id="grp==")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendPollVote"
+    assert req_body["params"]["poll-answer"] == [0]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_terminate_poll(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    await client.terminate_poll("+1", 123, poll_id=1, group_id="grp==")
+    req_body = json.loads(respx.calls[-1].request.content)
+    assert req_body["method"] == "sendPollTerminate"
+
+
+@pytest.mark.asyncio
+async def test_create_poll_missing_conversation(client):
+    with pytest.raises(SignalError):
+        await client.create_poll("Q?", ["A", "B"])
+
+
+# ── group cache ───────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_ensure_group_cache(client):
+    groups_payload = [
+        {"id": "grpAAA==", "name": "Weekend plans", "members": [], "admins": []},
+    ]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(groups_payload)))
+    await client._ensure_group_cache()
+    assert client.resolve_group_name("grpAAA==") == "Weekend plans"
+    assert client.resolve_group_name("unknown==") == "unknown=="

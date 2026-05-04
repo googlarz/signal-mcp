@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **55 MCP tools** — complete coverage of everything signal-cli exposes
+- **62 MCP tools** — complete coverage of everything signal-cli exposes
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -227,9 +227,11 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `get_conversation` | Message history with a contact or group. Supports `since`, `limit`, and `offset` for pagination. |
 | `search_messages` | Full-text search (FTS5) across all stored messages. Supports `sender`, `limit`, and `offset`. |
 | `store_stats` | Total message count, oldest and newest message dates. |
+| `mark_as_unread` | Mark one or more stored messages as unread. |
 | `get_user_status` | Check whether phone numbers are registered Signal users. |
 | `send_sync_request` | Request sync of messages/contacts/groups from your primary device. |
 | `send_contacts_sync` | Push your contacts list to all linked devices. |
+| `send_message_request_response` | Accept or decline a message request from an unknown sender. |
 
 ### Security & Devices
 
@@ -241,6 +243,15 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `add_device` | Link a new device using a device link URI. |
 | `remove_device` | Unlink a device by ID. |
 | `update_device` | Rename a linked device. |
+| `get_avatar` | Retrieve the avatar image for a contact or group as base64. |
+
+### Polls
+
+| Tool | Description |
+|---|---|
+| `create_poll` | Create a poll in a group conversation. |
+| `vote_poll` | Cast a vote on an existing poll. |
+| `terminate_poll` | End a poll and prevent further votes. |
 
 ### Disappearing Messages
 
@@ -277,6 +288,14 @@ signal-mcp receive --watch                 # keep watching (saves to store)
 # Edit
 signal-mcp edit +1234567890 <timestamp> "corrected text"
 signal-mcp edit <group_id> <timestamp> "corrected text"
+
+# Pin / unpin / admin-delete messages
+signal-mcp pin +1234567890 <timestamp> +1234567890
+signal-mcp unpin +1234567890 <timestamp> +1234567890
+signal-mcp admin-delete <group_id> <timestamp> +1234567890
+
+# Devices
+signal-mcp update-device <device_id> "My Laptop"
 
 # Contacts & groups
 signal-mcp contacts

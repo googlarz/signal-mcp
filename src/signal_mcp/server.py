@@ -173,30 +173,32 @@ TOOLS = [
     ),
     Tool(
         name="send_attachment",
-        description="Send a file or image to a Signal contact",
+        description="Send one or more files/images to a Signal contact",
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
-                "path": {"type": "string", "description": "File path (absolute, relative, or ~/path)"},
+                "path": {"type": "string", "description": "Single file path (absolute, relative, or ~/path)"},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send in one message"},
                 "caption": {"type": "string", "description": "Optional caption text", "default": ""},
                 "view_once": {"type": "boolean", "description": "Send as view-once (disappears after viewing)", "default": False},
             },
-            "required": ["recipient", "path"],
+            "required": ["recipient"],
         },
     ),
     Tool(
         name="send_group_attachment",
-        description="Send a file or image to a Signal group",
+        description="Send one or more files/images to a Signal group",
         inputSchema={
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
-                "path": {"type": "string", "description": "File path (absolute, relative, or ~/path)"},
+                "path": {"type": "string", "description": "Single file path (absolute, relative, or ~/path)"},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send in one message"},
                 "caption": {"type": "string", "description": "Optional caption text", "default": ""},
                 "view_once": {"type": "boolean", "description": "Send as view-once (disappears after viewing)", "default": False},
             },
-            "required": ["group_id", "path"],
+            "required": ["group_id"],
         },
     ),
     Tool(
@@ -447,6 +449,7 @@ TOOLS = [
                 "add_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to promote to admin"},
                 "remove_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to demote from admin"},
                 "expiration_seconds": {"type": "integer", "description": "Disappearing message timer in seconds (0 to disable)"},
+                "link_mode": {"type": "string", "description": "Invite link mode: 'disabled', 'enabled', 'enabled-with-approval', or 'reset' to generate a new link"},
             },
             "required": ["group_id"],
         },
@@ -518,6 +521,86 @@ TOOLS = [
                 "name": {"type": "string", "description": "New name for the device"},
             },
             "required": ["device_id", "name"],
+        },
+    ),
+    Tool(
+        name="mark_as_unread",
+        description="Mark messages as unread in the local store",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "message_ids": {"type": "array", "items": {"type": "string"}, "description": "List of message IDs to mark as unread"},
+            },
+            "required": ["message_ids"],
+        },
+    ),
+    Tool(
+        name="get_avatar",
+        description="Get the avatar image for a contact or group as base64-encoded data",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "identifier": {"type": "string", "description": "Phone number (E.164) for a contact or group ID for a group"},
+            },
+            "required": ["identifier"],
+        },
+    ),
+    Tool(
+        name="send_message_request_response",
+        description="Accept or decline a message request from an unknown contact (required before replying to strangers)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "sender": {"type": "string", "description": "Phone number of the contact who sent the message request"},
+                "accept": {"type": "boolean", "description": "true to accept and start chatting, false to decline/block"},
+            },
+            "required": ["sender", "accept"],
+        },
+    ),
+    Tool(
+        name="create_poll",
+        description="Create a poll and send it to a contact or group",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The poll question"},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "List of answer options (at least 2)"},
+                "recipient": {"type": "string", "description": "Phone number for a DM poll"},
+                "group_id": {"type": "string", "description": "Group ID for a group poll"},
+                "multi_select": {"type": "boolean", "description": "Allow multiple answer selection (default false)", "default": False},
+            },
+            "required": ["question", "options"],
+        },
+    ),
+    Tool(
+        name="vote_poll",
+        description="Vote on a poll",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "target_author": {"type": "string", "description": "Phone number of the poll creator"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the poll message"},
+                "poll_id": {"type": "integer", "description": "Poll ID from the original poll message"},
+                "votes": {"type": "array", "items": {"type": "integer"}, "description": "List of option indices to vote for (0-based)"},
+                "recipient": {"type": "string", "description": "Phone number for a DM poll"},
+                "group_id": {"type": "string", "description": "Group ID for a group poll"},
+            },
+            "required": ["target_author", "target_timestamp", "poll_id", "votes"],
+        },
+    ),
+    Tool(
+        name="terminate_poll",
+        description="End a poll you created",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "target_author": {"type": "string", "description": "Phone number of the poll creator (your own number)"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the poll message"},
+                "poll_id": {"type": "integer", "description": "Poll ID from the original poll message"},
+                "recipient": {"type": "string", "description": "Phone number for a DM poll"},
+                "group_id": {"type": "string", "description": "Group ID for a group poll"},
+            },
+            "required": ["target_author", "target_timestamp", "poll_id"],
         },
     ),
     Tool(
@@ -690,8 +773,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "send_message":         ["recipient", "message"],
             "send_group_message":   ["group_id", "message"],
             "send_note_to_self":    ["message"],
-            "send_attachment":      ["recipient", "path"],
-            "send_group_attachment":["group_id", "path"],
+            "send_attachment":      ["recipient"],
+            "send_group_attachment":["group_id"],
             "send_sticker":         ["recipient", "pack_id", "sticker_id"],
             "send_group_sticker":   ["group_id", "pack_id", "sticker_id"],
             "get_conversation":     ["recipient"],
@@ -720,10 +803,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "clear_local_store":    ["confirm"],
             "delete_local_messages":["recipient"],
             "get_user_status":      ["recipients"],
-            "pin_message":          ["target_author", "target_timestamp"],
-            "unpin_message":        ["target_author", "target_timestamp"],
-            "admin_delete_message": ["group_id", "target_author", "target_timestamp"],
-            "update_device":        ["device_id", "name"],
+            "pin_message":                    ["target_author", "target_timestamp"],
+            "unpin_message":                  ["target_author", "target_timestamp"],
+            "admin_delete_message":           ["group_id", "target_author", "target_timestamp"],
+            "update_device":                  ["device_id", "name"],
+            "mark_as_unread":                 ["message_ids"],
+            "get_avatar":                     ["identifier"],
+            "send_message_request_response":  ["sender", "accept"],
+            "create_poll":                    ["question", "options"],
+            "vote_poll":                      ["target_author", "target_timestamp", "poll_id", "votes"],
+            "terminate_poll":                 ["target_author", "target_timestamp", "poll_id"],
         }
         if name in _REQUIRED:
             err = _require(arguments, *_REQUIRED[name])
@@ -830,18 +919,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "send_attachment":
+            path_arg = arguments.get("paths") or arguments.get("path")
+            if not path_arg:
+                return _err("Either path or paths is required")
             result = await client.send_attachment(
                 arguments["recipient"],
-                arguments["path"],
+                path_arg,
                 caption=arguments.get("caption", ""),
                 view_once=arguments.get("view_once", False),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp})
 
         elif name == "send_group_attachment":
+            path_arg = arguments.get("paths") or arguments.get("path")
+            if not path_arg:
+                return _err("Either path or paths is required")
             result = await client.send_group_attachment(
                 arguments["group_id"],
-                arguments["path"],
+                path_arg,
                 caption=arguments.get("caption", ""),
                 view_once=arguments.get("view_once", False),
             )
@@ -933,7 +1028,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "list_conversations":
             await client._ensure_contact_cache()
-            return _ok(await client.list_conversations())
+            await client._ensure_group_cache()
+            conversations = await client.list_conversations()
+            # Enrich with human-readable names
+            for conv in conversations:
+                if conv["type"] == "direct":
+                    conv["name"] = client.resolve_name(conv["id"])
+                else:
+                    conv["name"] = client.resolve_group_name(conv["id"])
+            return _ok(conversations)
 
         elif name == "delete_message":
             await client.delete_message(arguments["recipient"], arguments["target_timestamp"])
@@ -961,6 +1064,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 expiration_seconds=arguments.get("expiration_seconds"),
                 add_admins=arguments.get("add_admins"),
                 remove_admins=arguments.get("remove_admins"),
+                link_mode=arguments.get("link_mode"),
             )
             return _ok({"status": "group updated", "group_id": arguments["group_id"]})
 
@@ -1065,6 +1169,59 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "send_sync_request":
             await client.send_sync_request()
             return _ok({"status": "sync requested"})
+
+        elif name == "mark_as_unread":
+            await client.mark_as_unread(arguments["message_ids"])
+            return _ok({"status": "marked as unread", "count": len(arguments["message_ids"])})
+
+        elif name == "get_avatar":
+            avatar_data = await client.get_avatar(arguments["identifier"])
+            return _ok({"identifier": arguments["identifier"], "base64": avatar_data, "has_avatar": bool(avatar_data)})
+
+        elif name == "send_message_request_response":
+            await client.send_message_request_response(arguments["sender"], arguments["accept"])
+            action = "accepted" if arguments["accept"] else "declined"
+            return _ok({"status": f"message request {action}", "sender": arguments["sender"]})
+
+        elif name == "create_poll":
+            if not arguments.get("recipient") and not arguments.get("group_id"):
+                return _err("Either recipient or group_id is required")
+            options = arguments.get("options", [])
+            if len(options) < 2:
+                return _err("Poll requires at least 2 options")
+            result = await client.create_poll(
+                question=arguments["question"],
+                options=options,
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+                multi_select=arguments.get("multi_select", False),
+            )
+            return _ok({"status": "poll created", "timestamp": result.timestamp})
+
+        elif name == "vote_poll":
+            if not arguments.get("recipient") and not arguments.get("group_id"):
+                return _err("Either recipient or group_id is required")
+            await client.vote_poll(
+                target_author=arguments["target_author"],
+                target_timestamp=arguments["target_timestamp"],
+                poll_id=arguments["poll_id"],
+                votes=arguments["votes"],
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+            )
+            return _ok({"status": "vote sent"})
+
+        elif name == "terminate_poll":
+            if not arguments.get("recipient") and not arguments.get("group_id"):
+                return _err("Either recipient or group_id is required")
+            await client.terminate_poll(
+                target_author=arguments["target_author"],
+                target_timestamp=arguments["target_timestamp"],
+                poll_id=arguments["poll_id"],
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+            )
+            return _ok({"status": "poll terminated"})
 
         elif name == "export_messages":
             fmt = arguments.get("format", "json")

@@ -970,3 +970,137 @@ async def test_tool_update_device():
 async def test_tool_update_device_missing_param():
     result = await call_tool("update_device", {"device_id": 2})
     assert "Error" in result[0].text
+
+
+# ── mark_as_unread ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_tool_mark_as_unread():
+    import signal_mcp.store as _store_mod
+    from signal_mcp.models import Message
+    from datetime import datetime
+    _store_mod.init_db()
+    _store_mod.save_message(Message(id="mu1", sender="+1", body="hi",
+                                    timestamp=datetime(2024, 1, 1)))
+    _store_mod.mark_as_read(["mu1"])
+    result = await call_tool("mark_as_unread", {"message_ids": ["mu1"]})
+    data = json.loads(result[0].text)
+    assert data["count"] == 1
+    assert data["status"] == "marked as unread"
+
+
+@pytest.mark.asyncio
+async def test_tool_mark_as_unread_missing_param():
+    result = await call_tool("mark_as_unread", {})
+    assert "Error" in result[0].text
+
+
+# ── get_avatar ────────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_get_avatar():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "imgdata"})))
+    result = await call_tool("get_avatar", {"identifier": "+19999999999"})
+    data = json.loads(result[0].text)
+    assert data["base64"] == "imgdata"
+    assert data["has_avatar"] is True
+
+
+# ── send_message_request_response ────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_message_request_response_accept():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("send_message_request_response", {"sender": "+1", "accept": True})
+    data = json.loads(result[0].text)
+    assert "accepted" in data["status"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_message_request_response_decline():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("send_message_request_response", {"sender": "+1", "accept": False})
+    data = json.loads(result[0].text)
+    assert "declined" in data["status"]
+
+
+# ── create_poll ───────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_create_poll():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 123})))
+    result = await call_tool("create_poll", {
+        "question": "Best day?", "options": ["Mon", "Fri"], "group_id": "grp==",
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "poll created"
+
+
+@pytest.mark.asyncio
+async def test_tool_create_poll_too_few_options():
+    result = await call_tool("create_poll", {
+        "question": "Q?", "options": ["Only one"], "group_id": "grp==",
+    })
+    assert "Error" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_tool_create_poll_missing_conversation():
+    result = await call_tool("create_poll", {"question": "Q?", "options": ["A", "B"]})
+    assert "Error" in result[0].text
+
+
+# ── vote_poll ─────────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_vote_poll():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("vote_poll", {
+        "target_author": "+1", "target_timestamp": 123,
+        "poll_id": 1, "votes": [0], "group_id": "grp==",
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "vote sent"
+
+
+# ── terminate_poll ────────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_terminate_poll():
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
+    result = await call_tool("terminate_poll", {
+        "target_author": "+1", "target_timestamp": 123,
+        "poll_id": 1, "group_id": "grp==",
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "poll terminated"
+
+
+# ── send_attachment multiple paths ───────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_attachment_paths_array(tmp_path):
+    f1 = tmp_path / "a.txt"
+    f2 = tmp_path / "b.txt"
+    f1.write_text("x")
+    f2.write_text("y")
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    result = await call_tool("send_attachment", {
+        "recipient": "+19999999999",
+        "paths": [str(f1), str(f2)],
+    })
+    data = json.loads(result[0].text)
+    assert data["status"] == "sent"
+
+
+@pytest.mark.asyncio
+async def test_tool_send_attachment_no_path():
+    result = await call_tool("send_attachment", {"recipient": "+1"})
+    assert "Error" in result[0].text

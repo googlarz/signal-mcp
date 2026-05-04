@@ -10,6 +10,9 @@ class Attachment:
     filename: str
     local_path: str | None = None
     size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    caption: str | None = None
 
 
 @dataclass
@@ -25,6 +28,9 @@ class Message:
     reactions: dict[str, str] = field(default_factory=dict)  # emoji -> sender
     is_read: bool = False
     receipt_type: str | None = None  # "DELIVERY" or "READ" for receipt envelopes
+    expires_in_seconds: int | None = None  # disappearing message timer
+    view_once: bool = False            # view-once message
+    is_reaction: bool = False          # this is a reaction message (not stored)
 
     def to_dict(self) -> dict:
         return {
@@ -39,6 +45,9 @@ class Message:
                     "filename": a.filename,
                     "local_path": a.local_path,
                     "size": a.size,
+                    "width": a.width,
+                    "height": a.height,
+                    "caption": a.caption,
                 }
                 for a in self.attachments
             ],
@@ -47,6 +56,8 @@ class Message:
             "reactions": self.reactions,
             "is_read": self.is_read,
             "receipt_type": self.receipt_type,
+            "expires_in_seconds": self.expires_in_seconds,
+            "view_once": self.view_once,
         }
 
 

@@ -242,6 +242,19 @@ def mark_as_read(message_ids: list[str]) -> None:
         )
 
 
+def mark_as_unread(message_ids: list[str]) -> None:
+    """Mark specific messages as unread in the store."""
+    if not message_ids:
+        return
+    init_db()
+    with _db() as conn:
+        placeholders = ",".join("?" * len(message_ids))
+        conn.execute(
+            f"UPDATE messages SET is_read = 0 WHERE id IN ({placeholders})",
+            message_ids,
+        )
+
+
 def list_conversations(own_number: str = "") -> list[dict]:
     """Return all distinct conversations ordered by most recent message."""
     init_db()
@@ -423,7 +436,12 @@ def export_messages(
                 "quote_id": m.quote_id,
                 "is_read": m.is_read,
                 "attachments": [
-                    {"content_type": a.content_type, "filename": a.filename, "size": a.size}
+                    {
+                        "content_type": a.content_type,
+                        "filename": a.filename,
+                        "local_path": a.local_path,
+                        "size": a.size,
+                    }
                     for a in m.attachments
                 ],
             }
