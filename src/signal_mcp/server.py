@@ -58,21 +58,32 @@ def _require(arguments: dict, *keys: str) -> str | None:
 TOOLS = [
     Tool(
         name="send_message",
-        description="Send a text message to a Signal contact",
+        description=(
+            "Send a text message to a Signal contact. The message is delivered end-to-end encrypted. "
+            "Returns the sent timestamp, which can be used as target_timestamp for react_to_message or edit_message. "
+            "To reply/quote a specific message, provide quote_author and quote_timestamp (get timestamps from get_conversation). "
+            "Use send_group_message for group chats, send_attachment for files/images."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format (e.g. +1234567890)"},
                 "message": {"type": "string", "description": "Message text to send"},
-                "quote_author": {"type": "string", "description": "Phone number of the message being quoted/replied to"},
-                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to"},
+                "quote_author": {"type": "string", "description": "Phone number of the author of the message being quoted/replied to"},
+                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to (from get_conversation)"},
             },
             "required": ["recipient", "message"],
         },
     ),
     Tool(
         name="send_group_message",
-        description="Send a text message to a Signal group",
+        description=(
+            "Send a text message to a Signal group. All group members receive the message. "
+            "Returns the sent timestamp for use with react_to_message or edit_message. "
+            "To @mention specific members, provide a mentions list with character offsets into the message text. "
+            "To reply to a message, provide quote_author and quote_timestamp. "
+            "Use list_groups to find the group_id."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -80,7 +91,7 @@ TOOLS = [
                 "message": {"type": "string", "description": "Message text to send"},
                 "mentions": {
                     "type": "array",
-                    "description": "List of @mentions: each item is {start, length, author} where author is a phone number",
+                    "description": "List of @mentions: each item is {start, length, author} where start/length are character offsets into the message and author is a phone number",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -90,15 +101,19 @@ TOOLS = [
                         },
                     },
                 },
-                "quote_author": {"type": "string", "description": "Phone number of the message being quoted/replied to"},
-                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to"},
+                "quote_author": {"type": "string", "description": "Phone number of the author of the message being quoted/replied to"},
+                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to (from get_conversation)"},
             },
             "required": ["group_id", "message"],
         },
     ),
     Tool(
         name="send_note_to_self",
-        description="Send a note to yourself (saved messages / note to self)",
+        description=(
+            "Send a note to yourself via Signal's 'Note to Self' / saved messages feature. "
+            "The note is synced across all your linked Signal devices. "
+            "Useful for saving reminders, bookmarks, or drafts that sync to your phone."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -109,14 +124,20 @@ TOOLS = [
     ),
     Tool(
         name="edit_message",
-        description="Edit a previously sent message",
+        description=(
+            "Edit the text of a message you previously sent. Signal delivers the edit to all recipients; "
+            "they see the updated text with an '(edited)' indicator. Only the text can be edited — "
+            "attachments, reactions, and quoted messages cannot be changed. "
+            "Provide recipient for DM edits or group_id for group edits. "
+            "Get target_timestamp from get_conversation or the original send_message response."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to edit"},
-                "message": {"type": "string", "description": "New message text"},
-                "recipient": {"type": "string", "description": "Phone number for a DM message"},
-                "group_id": {"type": "string", "description": "Group ID for a group message"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to edit (from get_conversation or send_message response)"},
+                "message": {"type": "string", "description": "New message text to replace the original"},
+                "recipient": {"type": "string", "description": "Phone number for a DM message edit"},
+                "group_id": {"type": "string", "description": "Group ID for a group message edit"},
             },
             "required": ["target_timestamp", "message"],
         },
@@ -137,17 +158,26 @@ TOOLS = [
     ),
     Tool(
         name="list_contacts",
-        description="List all Signal contacts with names and phone numbers",
+        description=(
+            "List all Signal contacts known to this account, including names and phone numbers. "
+            "Use the optional search parameter to filter by name or number substring. "
+            "Returns contacts from signal-cli's local contact store. "
+            "Use get_profile to fetch the current Signal profile for a specific contact."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "search": {"type": "string", "description": "Filter contacts by name or number (case-insensitive substring)"},
+                "search": {"type": "string", "description": "Filter contacts by name or number (case-insensitive substring match)"},
             },
         },
     ),
     Tool(
         name="list_groups",
-        description="List all Signal groups with members",
+        description=(
+            "List all Signal groups this account belongs to, including group name, ID, members, and admin list. "
+            "The group_id returned here is required for send_group_message, send_group_attachment, and update_group. "
+            "Use update_group to modify a group, or leave_group to exit."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -180,30 +210,42 @@ TOOLS = [
     ),
     Tool(
         name="send_attachment",
-        description="Send one or more files/images to a Signal contact",
+        description=(
+            "Send one or more files or images to a Signal contact. "
+            "Supports photos, videos, documents, and audio files. "
+            "Use path for a single file or paths to send multiple files in one message. "
+            "Set view_once=true to send media that auto-deletes after the recipient views it once. "
+            "For groups use send_group_attachment instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
                 "path": {"type": "string", "description": "Single file path (absolute, relative, or ~/path)"},
-                "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send in one message"},
-                "caption": {"type": "string", "description": "Optional caption text", "default": ""},
-                "view_once": {"type": "boolean", "description": "Send as view-once (disappears after viewing)", "default": False},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send as one message"},
+                "caption": {"type": "string", "description": "Optional caption text shown below the attachment", "default": ""},
+                "view_once": {"type": "boolean", "description": "Send as view-once media — recipient can only view it once before it disappears", "default": False},
             },
             "required": ["recipient"],
         },
     ),
     Tool(
         name="send_group_attachment",
-        description="Send one or more files/images to a Signal group",
+        description=(
+            "Send one or more files or images to a Signal group. All group members receive the attachment. "
+            "Supports photos, videos, documents, and audio files. "
+            "Use path for a single file or paths to send multiple files in one message. "
+            "Set view_once=true for media that disappears after each member's first view. "
+            "Use list_groups to find the group_id. For direct messages use send_attachment instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
                 "path": {"type": "string", "description": "Single file path (absolute, relative, or ~/path)"},
-                "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send in one message"},
-                "caption": {"type": "string", "description": "Optional caption text", "default": ""},
-                "view_once": {"type": "boolean", "description": "Send as view-once (disappears after viewing)", "default": False},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send as one message"},
+                "caption": {"type": "string", "description": "Optional caption text shown below the attachment", "default": ""},
+                "view_once": {"type": "boolean", "description": "Send as view-once media — each recipient can only view it once", "default": False},
             },
             "required": ["group_id"],
         },
@@ -226,19 +268,30 @@ TOOLS = [
     ),
     Tool(
         name="set_typing",
-        description="Send a typing indicator to a contact",
+        description=(
+            "Send a typing indicator to a Signal contact, showing them that you are composing a message. "
+            "The indicator is ephemeral — it auto-expires after approximately 15 seconds if not followed by a message. "
+            "Call with stop=true to cancel an active typing indicator before it expires naturally. "
+            "Typing indicators only work for direct messages, not groups. "
+            "Note: the contact must have typing indicators enabled in their Signal settings to receive it."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
-                "stop": {"type": "boolean", "description": "True to stop typing indicator (default: False)", "default": False},
+                "stop": {"type": "boolean", "description": "Set to true to cancel an active typing indicator (default: false = start typing)", "default": False},
             },
             "required": ["recipient"],
         },
     ),
     Tool(
         name="get_profile",
-        description="Get profile information for a Signal contact",
+        description=(
+            "Fetch the Signal profile for a contact, including their display name, about text, and avatar. "
+            "Profile data is fetched live from the Signal network (not local cache). "
+            "Use this to verify a contact's current name or check if they have a profile set up. "
+            "Use update_profile to update your own profile."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -249,33 +302,49 @@ TOOLS = [
     ),
     Tool(
         name="block_contact",
-        description="Block a Signal contact",
+        description=(
+            "Block a Signal contact, preventing them from sending you messages or calls. "
+            "The blocked contact is NOT notified of the block. "
+            "Their messages will be silently discarded; they will not see delivery confirmations. "
+            "The block is stored locally — use unblock_contact to reverse it. "
+            "Note: blocking does not delete existing message history."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "number": {"type": "string", "description": "Phone number to block"},
+                "number": {"type": "string", "description": "Phone number to block (E.164 format, e.g. +1234567890)"},
             },
             "required": ["number"],
         },
     ),
     Tool(
         name="unblock_contact",
-        description="Unblock a previously blocked Signal contact",
+        description=(
+            "Unblock a previously blocked Signal contact, restoring their ability to send you messages and calls. "
+            "The contact is NOT notified that they were unblocked. "
+            "Use block_contact to re-block, or list_contacts to see which contacts are blocked."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "number": {"type": "string", "description": "Phone number to unblock"},
+                "number": {"type": "string", "description": "Phone number to unblock (E.164 format)"},
             },
             "required": ["number"],
         },
     ),
     Tool(
         name="remove_contact",
-        description="Remove a contact from the local contact list",
+        description=(
+            "Remove a contact from the local signal-cli contact list on this device. "
+            "This only removes the local record — it does NOT block the contact, delete message history, "
+            "or affect the contact's ability to message you. "
+            "To prevent incoming messages, use block_contact instead. "
+            "Use update_contact to set a local display name without removing."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "number": {"type": "string", "description": "Phone number to remove"},
+                "number": {"type": "string", "description": "Phone number to remove (E.164 format)"},
             },
             "required": ["number"],
         },
@@ -295,24 +364,34 @@ TOOLS = [
     ),
     Tool(
         name="create_group",
-        description="Create a new Signal group",
+        description=(
+            "Create a new Signal group with specified members. "
+            "You are automatically added as the group admin. All listed members receive an invitation notification. "
+            "Returns the new group's ID and invite link. "
+            "Use update_group to modify the group after creation (name, description, members, link settings). "
+            "Use send_group_message to post messages to the group."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Group name"},
-                "members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers of initial members"},
-                "description": {"type": "string", "description": "Optional group description"},
+                "name": {"type": "string", "description": "Group name visible to all members"},
+                "members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) of initial members to invite"},
+                "description": {"type": "string", "description": "Optional group description shown in group info"},
             },
             "required": ["name", "members"],
         },
     ),
     Tool(
         name="join_group",
-        description="Join a Signal group via invite link",
+        description=(
+            "Join a Signal group using an invite link (https://signal.group/#...). "
+            "If the group requires admin approval, your join request will be pending until approved. "
+            "After joining, use list_groups to find the group_id for sending messages."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "uri": {"type": "string", "description": "Group invite link (https://signal.group/#...)"},
+                "uri": {"type": "string", "description": "Group invite link starting with https://signal.group/#"},
             },
             "required": ["uri"],
         },
@@ -474,69 +553,98 @@ TOOLS = [
     ),
     Tool(
         name="leave_group",
-        description="Leave a Signal group",
+        description=(
+            "Leave a Signal group. After leaving, you will no longer receive messages from the group "
+            "and will be removed from the member list. Other members are notified that you left. "
+            "This action is irreversible without being re-invited. "
+            "Use list_groups to find the group_id."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "group_id": {"type": "string", "description": "Group ID to leave"},
+                "group_id": {"type": "string", "description": "Group ID to leave (get from list_groups)"},
             },
             "required": ["group_id"],
         },
     ),
     Tool(
         name="pin_message",
-        description="Pin a message in a DM or group conversation",
+        description=(
+            "Pin a message in a DM or group conversation. Pinned messages appear prominently in the "
+            "conversation header, making them easy to find later. "
+            "Provide either recipient (for DMs) or group_id (for groups) — exactly one is required. "
+            "Get target_author and target_timestamp from get_conversation. "
+            "Use unpin_message to remove a pinned message."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "target_author": {"type": "string", "description": "Phone number of the message author"},
-                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to pin"},
-                "recipient": {"type": "string", "description": "Phone number for DM conversations"},
-                "group_id": {"type": "string", "description": "Group ID for group conversations"},
+                "target_author": {"type": "string", "description": "Phone number of the message author (E.164)"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to pin (from get_conversation)"},
+                "recipient": {"type": "string", "description": "Phone number for DM conversations — provide this OR group_id"},
+                "group_id": {"type": "string", "description": "Group ID for group conversations — provide this OR recipient"},
             },
             "required": ["target_author", "target_timestamp"],
         },
     ),
     Tool(
         name="unpin_message",
-        description="Unpin a previously pinned message in a DM or group conversation",
+        description=(
+            "Unpin a previously pinned message in a DM or group conversation, removing it from the "
+            "conversation header. Provide either recipient (for DMs) or group_id (for groups). "
+            "Get target_author and target_timestamp from get_conversation. "
+            "Use pin_message to pin a message."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "target_author": {"type": "string", "description": "Phone number of the message author"},
-                "target_timestamp": {"type": "integer", "description": "Timestamp of the pinned message"},
-                "recipient": {"type": "string", "description": "Phone number for DM conversations"},
-                "group_id": {"type": "string", "description": "Group ID for group conversations"},
+                "target_author": {"type": "string", "description": "Phone number of the message author (E.164)"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the pinned message (from get_conversation)"},
+                "recipient": {"type": "string", "description": "Phone number for DM conversations — provide this OR group_id"},
+                "group_id": {"type": "string", "description": "Group ID for group conversations — provide this OR recipient"},
             },
             "required": ["target_author", "target_timestamp"],
         },
     ),
     Tool(
         name="admin_delete_message",
-        description="Group admin: delete any message in a group you administer",
+        description=(
+            "As a group admin, delete any message posted in a group you administer, regardless of who sent it. "
+            "The message is removed for all participants immediately. "
+            "Only works if you are an admin of the specified group — use list_groups to confirm admin status. "
+            "For deleting your own messages use delete_message (DM) or delete_group_message (group) instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "group_id": {"type": "string", "description": "Group ID"},
-                "target_author": {"type": "string", "description": "Phone number of the message author"},
-                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to delete"},
+                "group_id": {"type": "string", "description": "Group ID where the message was sent (get from list_groups)"},
+                "target_author": {"type": "string", "description": "Phone number of the user who sent the message"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the message to delete (from get_conversation)"},
             },
             "required": ["group_id", "target_author", "target_timestamp"],
         },
     ),
     Tool(
         name="send_contacts_sync",
-        description="Sync your contacts list to all linked devices",
+        description=(
+            "Push your local contacts list to all linked Signal devices (e.g., phone, desktop). "
+            "Useful when contacts added via signal-cli are not showing up on other devices. "
+            "This is a one-way sync from this device outward."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="update_device",
-        description="Rename a linked device",
+        description=(
+            "Rename a linked device on your Signal account. The new name is visible in your Signal "
+            "app's linked devices list. Use list_devices to see all linked devices and their IDs. "
+            "To unlink a device entirely, use remove_device."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "device_id": {"type": "integer", "description": "Device ID from list_devices"},
-                "name": {"type": "string", "description": "New name for the device"},
+                "device_id": {"type": "integer", "description": "Device ID (get from list_devices)"},
+                "name": {"type": "string", "description": "New display name for the device"},
             },
             "required": ["device_id", "name"],
         },
@@ -577,46 +685,64 @@ TOOLS = [
     ),
     Tool(
         name="create_poll",
-        description="Create a poll and send it to a contact or group",
+        description=(
+            "Create a poll and send it to a Signal contact or group. "
+            "Provide at least 2 options. Set multi_select=true to allow voters to pick multiple answers. "
+            "Provide either recipient (DM) or group_id (group) — exactly one is required. "
+            "Returns the poll timestamp needed for vote_poll and terminate_poll. "
+            "Use terminate_poll to close the poll and stop accepting votes."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "question": {"type": "string", "description": "The poll question"},
-                "options": {"type": "array", "items": {"type": "string"}, "description": "List of answer options (at least 2)"},
-                "recipient": {"type": "string", "description": "Phone number for a DM poll"},
-                "group_id": {"type": "string", "description": "Group ID for a group poll"},
-                "multi_select": {"type": "boolean", "description": "Allow multiple answer selection (default false)", "default": False},
+                "question": {"type": "string", "description": "The poll question text"},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "List of answer options (minimum 2 required)"},
+                "recipient": {"type": "string", "description": "Phone number for a DM poll — provide this OR group_id"},
+                "group_id": {"type": "string", "description": "Group ID for a group poll — provide this OR recipient"},
+                "multi_select": {"type": "boolean", "description": "Allow voters to select multiple options (default: false = single choice only)", "default": False},
             },
             "required": ["question", "options"],
         },
     ),
     Tool(
         name="vote_poll",
-        description="Vote on a poll",
+        description=(
+            "Cast a vote on an active Signal poll. Your vote is delivered to all conversation participants. "
+            "Get target_author, target_timestamp, and poll_id from the poll message in get_conversation. "
+            "For single-choice polls, provide one index in votes. For multi-select polls, list all chosen indices. "
+            "Provide either recipient (DM poll) or group_id (group poll). "
+            "Use terminate_poll to close a poll you created."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "target_author": {"type": "string", "description": "Phone number of the poll creator"},
-                "target_timestamp": {"type": "integer", "description": "Timestamp of the poll message"},
-                "poll_id": {"type": "integer", "description": "Poll ID from the original poll message"},
-                "votes": {"type": "array", "items": {"type": "integer"}, "description": "List of option indices to vote for (0-based)"},
-                "recipient": {"type": "string", "description": "Phone number for a DM poll"},
-                "group_id": {"type": "string", "description": "Group ID for a group poll"},
+                "target_author": {"type": "string", "description": "Phone number of the poll creator (E.164)"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the poll message (from get_conversation)"},
+                "poll_id": {"type": "integer", "description": "Poll ID from the poll message data"},
+                "votes": {"type": "array", "items": {"type": "integer"}, "description": "Option indices to vote for (0-based). Single item for single-choice polls."},
+                "recipient": {"type": "string", "description": "Phone number for a DM poll — provide this OR group_id"},
+                "group_id": {"type": "string", "description": "Group ID for a group poll — provide this OR recipient"},
             },
             "required": ["target_author", "target_timestamp", "poll_id", "votes"],
         },
     ),
     Tool(
         name="terminate_poll",
-        description="End a poll you created",
+        description=(
+            "Close (terminate) a poll you created, stopping any further votes. "
+            "All participants are notified that the poll has ended and can see the final results. "
+            "Get target_timestamp and poll_id from the original poll message in get_conversation. "
+            "Only the poll creator can terminate their own poll. "
+            "Provide either recipient (DM poll) or group_id (group poll)."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "target_author": {"type": "string", "description": "Phone number of the poll creator (your own number)"},
-                "target_timestamp": {"type": "integer", "description": "Timestamp of the poll message"},
-                "poll_id": {"type": "integer", "description": "Poll ID from the original poll message"},
-                "recipient": {"type": "string", "description": "Phone number for a DM poll"},
-                "group_id": {"type": "string", "description": "Group ID for a group poll"},
+                "target_author": {"type": "string", "description": "Phone number of the poll creator — must be your own number"},
+                "target_timestamp": {"type": "integer", "description": "Timestamp of the poll message (from get_conversation)"},
+                "poll_id": {"type": "integer", "description": "Poll ID from the original poll message data"},
+                "recipient": {"type": "string", "description": "Phone number for a DM poll — provide this OR group_id"},
+                "group_id": {"type": "string", "description": "Group ID for a group poll — provide this OR recipient"},
             },
             "required": ["target_author", "target_timestamp", "poll_id"],
         },
@@ -714,12 +840,21 @@ TOOLS += [
     ),
     Tool(
         name="list_sticker_packs",
-        description="List all installed Signal sticker packs (shows pack_id and sticker_id values for send_sticker)",
+        description=(
+            "List all sticker packs installed on this Signal account. "
+            "Returns pack_id and sticker_id values needed for send_sticker and send_group_sticker. "
+            "Use add_sticker_pack to install a new pack from a signal.art URL."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="add_sticker_pack",
-        description="Install a sticker pack from a signal.art URL",
+        description=(
+            "Install a Signal sticker pack from a signal.art URL. "
+            "Once installed, use list_sticker_packs to browse pack contents, then send_sticker or "
+            "send_group_sticker to send individual stickers. "
+            "The URI must be a signal.art URL in the format: https://signal.art/addstickers/#pack_id=...&pack_key=..."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -730,26 +865,36 @@ TOOLS += [
     ),
     Tool(
         name="send_sticker",
-        description="Send a sticker to a Signal contact",
+        description=(
+            "Send a sticker to a Signal contact. "
+            "Use list_sticker_packs to browse installed packs and find pack_id and sticker_id values. "
+            "If no packs are installed, use add_sticker_pack first with a signal.art URL. "
+            "For groups use send_group_sticker instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
-                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string)"},
-                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack"},
+                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string from list_sticker_packs)"},
+                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack (from list_sticker_packs)"},
             },
             "required": ["recipient", "pack_id", "sticker_id"],
         },
     ),
     Tool(
         name="send_group_sticker",
-        description="Send a sticker to a Signal group",
+        description=(
+            "Send a sticker to a Signal group. All group members receive the sticker. "
+            "Use list_sticker_packs to browse installed packs and find pack_id and sticker_id values. "
+            "If no packs are installed, use add_sticker_pack first with a signal.art URL. "
+            "Use list_groups to find the group_id. For direct messages use send_sticker instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "group_id": {"type": "string", "description": "Group ID"},
-                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string)"},
-                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack"},
+                "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
+                "pack_id": {"type": "string", "description": "Sticker pack ID (hex string from list_sticker_packs)"},
+                "sticker_id": {"type": "integer", "description": "Sticker ID within the pack (from list_sticker_packs)"},
             },
             "required": ["group_id", "pack_id", "sticker_id"],
         },
@@ -800,16 +945,23 @@ TOOLS += [
     ),
     Tool(
         name="update_account",
-        description="Update account-level settings: device name, discoverability, number sharing, username.",
+        description=(
+            "Update Signal account-level privacy and identity settings. "
+            "All parameters are optional — only provide the settings you want to change. "
+            "discoverable_by_number controls whether others can find you by phone number. "
+            "number_sharing controls whether your number is shared with contacts you message. "
+            "username sets a @username alias; delete_username removes it. "
+            "Use get_configuration for messaging settings (read receipts, typing indicators)."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "device_name": {"type": "string", "description": "Name shown on linked-device list"},
-                "discoverable_by_number": {"type": "boolean", "description": "Allow others to find you by phone number"},
-                "number_sharing": {"type": "boolean", "description": "Share your number when sending messages"},
-                "username": {"type": "string", "description": "Set a Signal username (without @)"},
-                "delete_username": {"type": "boolean", "description": "Delete the current username"},
-                "unrestricted_unidentified_sender": {"type": "boolean", "description": "Allow sealed-sender from anyone"},
+                "device_name": {"type": "string", "description": "Name for this device shown in linked devices list"},
+                "discoverable_by_number": {"type": "boolean", "description": "Allow others to find your account by phone number"},
+                "number_sharing": {"type": "boolean", "description": "Share your phone number when sending messages"},
+                "username": {"type": "string", "description": "Set a Signal username (without @) as an alias for your number"},
+                "delete_username": {"type": "boolean", "description": "Delete your current Signal username"},
+                "unrestricted_unidentified_sender": {"type": "boolean", "description": "Allow sealed-sender messages from anyone (not just contacts)"},
             },
         },
     ),
