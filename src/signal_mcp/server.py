@@ -1167,6 +1167,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             await client._ensure_contact_cache()
             warning = await _freshen_store(client)
             messages = await client.get_unread_messages(limit=arguments.get("limit", 50))
+            # Mark as read — Claude has now seen these messages
+            unread_ids = [m.id for m in messages]
+            if unread_ids:
+                await asyncio.to_thread(_store.mark_as_read, unread_ids)
             result: dict = {"messages": [client._enrich_message(m) for m in messages]}
             if warning:
                 result["_warning"] = warning
