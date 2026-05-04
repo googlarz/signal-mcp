@@ -22,7 +22,7 @@ Once connected, just ask Claude naturally:
 
 ## Features
 
-- **62 MCP tools** — complete coverage of everything signal-cli exposes
+- **62 MCP tools** — covers ~90% of what signal-cli exposes (see [coverage matrix](#signal-cli-coverage))
 - **Quoted replies & @mentions** — reply to specific messages, mention group members
 - **Edit & delete messages** — fix typos, unsend mistakes
 - **View-once attachments** — send photos that disappear after viewing
@@ -364,6 +364,65 @@ signal-mcp serve
 ```
 
 The signal-cli daemon starts automatically on first use and stays alive across tool calls. Received attachments are saved to `~/Downloads/signal-attachments/`.
+
+## signal-cli Coverage
+
+signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli.1.adoc). Here's what is and isn't covered:
+
+### Covered (62 tools)
+
+| signal-cli command | signal-mcp tool |
+|---|---|
+| `send` | `send_message`, `send_group_message`, `send_note_to_self`, `send_attachment`, `send_group_attachment`, `send_sticker`, `send_group_sticker` |
+| `receive` | `receive_messages` (streaming), `get_unread` |
+| `listContacts` | `list_contacts` |
+| `listGroups` | `list_groups` |
+| `listDevices` | `list_devices` |
+| `listIdentities` | `list_identities` |
+| `listStickerPacks` | `list_sticker_packs` |
+| `getUserStatus` | `get_user_status` |
+| `getAttachment` | `get_attachment`, `list_attachments` |
+| `getAvatar` | `get_avatar` |
+| `block` / `unblock` | `block_contact` / `unblock_contact` |
+| `removeContact` | `remove_contact` |
+| `updateContact` | `update_contact` |
+| `trust` | `trust_identity` |
+| `joinGroup` | `join_group` |
+| `quitGroup` | `leave_group` |
+| `updateGroup` | `update_group`, `create_group` |
+| `addDevice` / `removeDevice` / `updateDevice` | `add_device` / `remove_device` / `update_device` |
+| `sendReaction` | `react_to_message` |
+| `sendTyping` | `set_typing` |
+| `sendReceipt` | `send_read_receipt` |
+| `sendSyncRequest` | `send_sync_request` |
+| `sendContacts` | `send_contacts_sync` |
+| `sendAdminDelete` | `admin_delete_message` |
+| `sendPinMessage` / `sendUnpinMessage` | `pin_message` / `unpin_message` |
+| `sendPollCreate` / `sendPollVote` / `sendPollTerminate` | `create_poll` / `vote_poll` / `terminate_poll` |
+| `sendMessageRequestResponse` | `send_message_request_response` |
+| `remoteDelete` | `delete_message`, `delete_group_message` |
+| `editMessage` | `edit_message` |
+| `updateProfile` | `update_profile` |
+| `updateConfiguration` | `update_configuration`, `get_configuration` |
+| `addStickerPack` | `add_sticker_pack` |
+
+Plus tools with no direct signal-cli equivalent: `get_conversation`, `search_messages`, `list_conversations`, `store_stats`, `import_desktop`, `export_messages`, `mark_as_unread`, `clear_local_store`, `delete_local_messages`.
+
+### Not covered
+
+| signal-cli command | Reason not covered |
+|---|---|
+| `acceptCall` / `hangupCall` / `rejectCall` / `startCall` / `listCalls` | Voice/video calls require WebRTC and an active UI; not feasible via MCP |
+| `register` / `verify` / `link` / `unregister` | Initial account setup — must be done once before installing signal-mcp |
+| `startChangeNumber` / `finishChangeNumber` | Multi-step phone number migration flow |
+| `setPin` / `removePin` | Registration PIN management — rarely needed, easy to do in CLI directly |
+| `deleteLocalAccountData` | Destroys all local data; too dangerous to expose as an MCP tool |
+| `listAccounts` | Multi-account support not implemented; signal-mcp targets a single account |
+| `sendPaymentNotification` | MobileCoin payments (requires funded wallet; out of scope) |
+| `submitRateLimitChallenge` | Rate-limit CAPTCHA bypass — only needed after bulk sends |
+| `updateAccount` | Low-level account settings (service environment, etc.); rarely needed |
+| `uploadStickerPack` | Create and publish new sticker packs — content creation, not messaging |
+| `getSticker` | Retrieve raw sticker image bytes — we expose the sticker pack list instead |
 
 ## Development
 
