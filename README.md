@@ -17,7 +17,7 @@ Everything runs locally via [signal-cli](https://github.com/AsamK/signal-cli). N
 
 **No conversation view.** signal-cli has no concept of a thread. signal-mcp gives you paginated history per contact or group, unread counts, and last-message previews across all your chats.
 
-**Raw phone numbers everywhere.** signal-mcp resolves `+491712221613` → `Alaa Moafy` in all output.
+**Raw phone numbers everywhere.** signal-mcp resolves `+12025551234` → `Anna Schmidt` in all output.
 
 **Manual daemon management.** signal-mcp auto-starts the daemon on first use, restarts it if it crashes, and can install a background service (macOS LaunchAgent or Linux systemd) that captures every incoming message — even when you're not at your computer.
 
