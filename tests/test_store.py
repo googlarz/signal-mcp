@@ -539,3 +539,131 @@ def test_prune_rejects_invalid_days():
         store.prune_old_messages(days=0)
     with pytest.raises(ValueError):
         store.prune_old_messages(days=-5)
+
+
+# ── Bug-fix regression tests ──────────────────────────────────────────────────
+
+# Bug 1: outgoing group messages were stored as is_read=0
+def test_save_group_message_with_is_read_true():
+    """Outgoing group messages saved with is_read=True must not appear as unread."""
+    from signal_mcp.models import Message
+    msg = Message(
+        id="grp_sent_1",
+        sender="+10000000000",
+        body="hello group",
+        timestamp=datetime(2024, 6, 1, 12, 0, 0),
+        group_id="group==abc",
+        is_read=True,
+    )
+    store.save_message(msg)
+    unread = store.get_unread_messages(own_number="+10000000000")
+    assert unread == [], "Outgoing group messages must not appear as unread"
+
+
+def test_save_incoming_group_message_is_unread():
+    """Incoming group messages (sender != own) must start as unread."""
+    msg = Message(
+        id="grp_in_1",
+        sender="+12223334444",
+        body="from a friend",
+        timestamp=datetime(2024, 6, 1, 12, 0, 0),
+        group_id="group==abc",
+        is_read=False,
+    )
+    store.save_message(msg)
+    unread = store.get_unread_messages(own_number="+10000000000")
+    assert len(unread) == 1
+
+
+# Bug 3: update_message_body matched by timestamp — non-unique, could corrupt sibling
+def test_update_message_body_with_sender_is_unique():
+    """update_message_body with sender must only update the matching message."""
+    ts = datetime(2024, 6, 1, 12, 0, 0)
+    ts_ms = int(ts.timestamp() * 1000)
+    # Two messages with identical millisecond timestamps (different senders)
+    store.save_message(make_msg(id="dup_a", sender="+1", body="original A", ts=ts))
+    store.save_message(make_msg(id="dup_b", sender="+2", body="original B", ts=ts))
+    store.update_message_body(ts_ms, "edited A", sender="+1")
+    msgs = store.get_conversation("+1")
+    assert msgs[0].body == "edited A"
+    msgs_b = store.get_conversation("+2")
+    assert msgs_b[0].body == "original B", "Sibling message must not be touched"
+
+
+def test_update_message_body_uses_id_not_timestamp():
+    """After edit, WHERE id = ? means only the single matched row changes."""
+    ts = datetime(2024, 6, 1, 12, 0, 0)
+    ts_ms = int(ts.timestamp() * 1000)
+    store.save_message(make_msg(id="edit_uniq", sender="+1", body="before", ts=ts))
+    store.update_message_body(ts_ms, "after")
+    msgs = store.get_conversation("+1")
+    assert msgs[0].body == "after"
+
+
+# Bug 4: get_stats unread count was inconsistent with get_unread_messages
+def test_get_stats_unread_uses_own_number():
+    """get_stats unread count must match get_unread_messages when own_number is provided."""
+    own = "+10000000000"
+    # Outgoing: sender=own — should NOT count as unread
+    store.save_message(make_msg(id="sent1", sender=own, recipient="+2"))
+    # Incoming direct: sender=other, recipient=None
+    store.save_message(make_msg(id="recv1", sender="+2", recipient=None))
+    # Incoming group: sender=other, group_id set
+    store.save_message(make_msg(id="grp1", sender="+2", group_id="g==1"))
+
+    stats = store.get_stats(own_number=own)
+    unread_list = store.get_unread_messages(own_number=own)
+    assert stats["unread_messages"] == len(unread_list), (
+        "get_stats unread count must match get_unread_messages count"
+    )
+    assert stats["unread_messages"] == 2  # recv1 + grp1
+
+
+def test_get_stats_own_sent_group_not_counted():
+    """After fix: outgoing group messages stored with is_read=True don't inflate unread."""
+    from signal_mcp.models import Message
+    own = "+10000000000"
+    msg = Message(
+        id="my_grp_msg",
+        sender=own,
+        body="my group post",
+        timestamp=datetime(2024, 6, 1),
+        group_id="g==1",
+        is_read=True,
+    )
+    store.save_message(msg)
+    stats = store.get_stats(own_number=own)
+    assert stats["unread_messages"] == 0
+
+
+# Bug 7: search_messages("") returned ALL messages via LIKE %%
+def test_search_messages_empty_query_returns_nothing():
+    """Empty search query must return [] rather than all messages."""
+    store.save_message(make_msg(id="s1", sender="+1", body="hello"))
+    store.save_message(make_msg(id="s2", sender="+2", body="world"))
+    assert store.search_messages("") == []
+    assert store.search_messages("   ") == []
+
+
+# Bug 8: mark_as_read/mark_as_unread overflowed SQLite 999-variable limit
+def test_mark_as_read_large_batch():
+    """mark_as_read must handle > 500 IDs without SQLite variable overflow."""
+    ids = [f"bulk_{i}" for i in range(600)]
+    for mid in ids:
+        store.save_message(make_msg(id=mid, sender="+1", body="bulk"))
+    store.mark_as_read(ids)
+    unread = store.get_unread_messages(own_number="+99")  # own_number not in senders
+    assert unread == []
+
+
+def test_mark_as_unread_large_batch():
+    """mark_as_unread must handle > 500 IDs without SQLite variable overflow."""
+    ids = [f"ubulk_{i}" for i in range(600)]
+    for mid in ids:
+        store.save_message(make_msg(id=mid, sender="+1", body="bulk"))
+    # Mark all read first
+    store.mark_as_read(ids)
+    # Now unmark
+    store.mark_as_unread(ids)
+    unread = store.get_unread_messages(own_number="+99", limit=700)
+    assert len(unread) == 600

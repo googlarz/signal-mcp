@@ -351,6 +351,8 @@ def conversations(as_json: bool):
     """List all conversations ordered by most recent message."""
     async def _run():
         async with SignalClient() as client:
+            await client._ensure_contact_cache()
+            await client._ensure_group_cache()
             convs = await client.list_conversations()
             if not convs:
                 click.echo("No conversations found.")

@@ -42,6 +42,8 @@ def _mock_client(**overrides):
     client.__aexit__ = AsyncMock(return_value=False)
     client.ensure_daemon = AsyncMock()
     client._daemon_alive = AsyncMock(return_value=True)
+    client._ensure_contact_cache = AsyncMock()
+    client._ensure_group_cache = AsyncMock()
     client.account = "+10000000000"
     for k, v in overrides.items():
         setattr(client, k, v)

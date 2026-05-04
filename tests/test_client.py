@@ -1008,7 +1008,12 @@ async def test_delete_local_messages(client):
 # ── get_unread auto-marks as read ─────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_get_unread_messages_marks_as_read(client):
+async def test_get_unread_messages_returns_unread(client):
+    """get_unread_messages returns unread messages WITHOUT marking them read.
+
+    The server handler is responsible for marking as read after trimming the
+    limit+1 probe — doing it here would silently consume the extra message.
+    """
     from datetime import datetime as _dt
     _store_mod.init_db()
     _store_mod.save_message(Message(
@@ -1017,9 +1022,9 @@ async def test_get_unread_messages_marks_as_read(client):
     ))
     msgs = await client.get_unread_messages()
     assert len(msgs) == 1
-    assert msgs[0].is_read is True
-    # Store should now show zero unread
-    assert _store_mod.get_unread_messages(own_number=client.account) == []
+    # Messages are returned as-is; still unread in the store
+    assert msgs[0].is_read is False
+    assert len(_store_mod.get_unread_messages(own_number=client.account)) == 1
 
 
 @pytest.mark.asyncio
@@ -1553,3 +1558,85 @@ async def test_submit_rate_limit_challenge(client):
     assert req_body["method"] == "submitRateLimitChallenge"
     assert req_body["params"]["challenge"] == "abc123"
     assert req_body["params"]["captcha"] == "signalcaptcha://token"
+
+
+# ── Bug-fix regression tests ──────────────────────────────────────────────────
+
+# Bug 1: send_group_message/attachment/sticker stored is_read=False (outgoing)
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_message_stored_as_read(client):
+    """Outgoing group messages must be stored as is_read=True so they don't inflate unread."""
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 5000})))
+    _store_mod.init_db()
+    await client.send_group_message("grp_test==", "hello group")
+    msgs = _store_mod.get_conversation("grp_test==")
+    assert len(msgs) == 1
+    assert msgs[0].is_read is True, "Outgoing group message must be stored as read"
+    # Must NOT appear in unread list
+    unread = _store_mod.get_unread_messages(own_number=client.account)
+    assert not any(m.id == msgs[0].id for m in unread)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_attachment_stored_as_read(client, tmp_path):
+    """Outgoing group attachments must be stored as is_read=True."""
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 6000})))
+    _store_mod.init_db()
+    f = tmp_path / "img.jpg"
+    f.write_bytes(b"data")
+    await client.send_group_attachment("grp_att==", str(f), caption="pic")
+    msgs = _store_mod.get_conversation("grp_att==")
+    assert len(msgs) == 1
+    assert msgs[0].is_read is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_send_group_sticker_stored_as_read(client):
+    """Outgoing group stickers must be stored as is_read=True."""
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 7000})))
+    _store_mod.init_db()
+    await client.send_group_sticker("grp_stk==", "packid", 1)
+    msgs = _store_mod.get_conversation("grp_stk==")
+    assert len(msgs) == 1
+    assert msgs[0].is_read is True
+
+
+# Bug 2: get_unread_messages must NOT auto-mark as read
+@pytest.mark.asyncio
+async def test_get_unread_messages_does_not_auto_mark(client):
+    """get_unread_messages must return messages without marking them read."""
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="no_mark1", sender="+12223334444", body="raw unread",
+        timestamp=_dt(2024, 1, 1), is_read=False,
+    ))
+    msgs = await client.get_unread_messages()
+    assert len(msgs) == 1
+    assert msgs[0].is_read is False
+    # Store must still have it as unread
+    still_unread = _store_mod.get_unread_messages(own_number=client.account)
+    assert len(still_unread) == 1, "get_unread_messages must not mark messages as read"
+
+
+# Bug 6: list_conversations must resolve group names
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_conversations_resolves_group_names(client, monkeypatch):
+    """list_conversations must include resolved group name when cache is populated."""
+    import signal_mcp.client as _client_mod
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="gcnv1", sender="+2", body="in group",
+        timestamp=_dt(2024, 6, 1), group_id="grpABC==",
+    ))
+    # Seed the group cache directly
+    monkeypatch.setitem(_client_mod._group_cache, "grpABC==", "My Team")
+    convs = await client.list_conversations()
+    group_convs = [c for c in convs if c["type"] == "group"]
+    assert len(group_convs) == 1
+    assert group_convs[0].get("name") == "My Team"

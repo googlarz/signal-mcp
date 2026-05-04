@@ -177,6 +177,8 @@ def search_messages(
     sender: if given, restrict results to messages from this phone number.
     offset: skip this many results (for pagination).
     """
+    if not query or not query.strip():
+        return []
     init_db()
     with _db() as conn:
         sender_clause = "AND m.sender = ?" if sender else ""
@@ -211,17 +213,27 @@ def get_unread_messages(own_number: str = "", limit: int = 50) -> list[Message]:
         return _rows_to_messages(conn, list(reversed(rows)))
 
 
-def update_message_body(target_timestamp_ms: int, new_body: str) -> None:
-    """Update a stored message's body after an edit. Also syncs FTS index."""
+def update_message_body(target_timestamp_ms: int, new_body: str, sender: str | None = None) -> None:
+    """Update a stored message's body after an edit. Also syncs FTS index.
+
+    sender: if provided, restricts the update to messages from this sender, preventing
+    accidental collision when two messages have the same millisecond timestamp.
+    """
     init_db()
     with _db() as conn:
-        row = conn.execute(
-            "SELECT rowid, id, sender, body FROM messages WHERE timestamp = ?",
-            (target_timestamp_ms,),
-        ).fetchone()
+        if sender:
+            row = conn.execute(
+                "SELECT rowid, id, sender, body FROM messages WHERE timestamp = ? AND sender = ?",
+                (target_timestamp_ms, sender),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT rowid, id, sender, body FROM messages WHERE timestamp = ? LIMIT 1",
+                (target_timestamp_ms,),
+            ).fetchone()
         if not row:
             return
-        conn.execute("UPDATE messages SET body = ? WHERE timestamp = ?", (new_body, target_timestamp_ms))
+        conn.execute("UPDATE messages SET body = ? WHERE id = ?", (new_body, row["id"]))
         # Sync FTS: remove stale entry, insert updated
         conn.execute(
             "INSERT INTO messages_fts(messages_fts, rowid, id, body, sender) VALUES ('delete', ?, ?, ?, ?)",
@@ -233,17 +245,27 @@ def update_message_body(target_timestamp_ms: int, new_body: str) -> None:
         )
 
 
+_SQLITE_MAX_VARS = 500  # well under SQLite's 999-variable limit
+
+
+def _chunked(lst: list, size: int):
+    """Yield successive chunks of `size` from `lst`."""
+    for i in range(0, len(lst), size):
+        yield lst[i : i + size]
+
+
 def mark_as_read(message_ids: list[str]) -> None:
     """Mark specific messages as read in the store."""
     if not message_ids:
         return
     init_db()
     with _db() as conn:
-        placeholders = ",".join("?" * len(message_ids))
-        conn.execute(
-            f"UPDATE messages SET is_read = 1 WHERE id IN ({placeholders})",
-            message_ids,
-        )
+        for chunk in _chunked(message_ids, _SQLITE_MAX_VARS):
+            placeholders = ",".join("?" * len(chunk))
+            conn.execute(
+                f"UPDATE messages SET is_read = 1 WHERE id IN ({placeholders})",
+                chunk,
+            )
 
 
 def mark_as_unread(message_ids: list[str]) -> None:
@@ -252,11 +274,12 @@ def mark_as_unread(message_ids: list[str]) -> None:
         return
     init_db()
     with _db() as conn:
-        placeholders = ",".join("?" * len(message_ids))
-        conn.execute(
-            f"UPDATE messages SET is_read = 0 WHERE id IN ({placeholders})",
-            message_ids,
-        )
+        for chunk in _chunked(message_ids, _SQLITE_MAX_VARS):
+            placeholders = ",".join("?" * len(chunk))
+            conn.execute(
+                f"UPDATE messages SET is_read = 0 WHERE id IN ({placeholders})",
+                chunk,
+            )
 
 
 def list_conversations(own_number: str = "") -> list[dict]:
@@ -474,11 +497,14 @@ def prune_old_messages(days: int = 180) -> int:
     return count
 
 
-def get_stats() -> dict:
+def get_stats(own_number: str = "") -> dict:
     init_db()
     with _db() as conn:
         total   = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        unread  = conn.execute("SELECT COUNT(*) FROM messages WHERE is_read = 0 AND recipient IS NULL").fetchone()[0]
+        # Mirror get_unread_messages: unread = not read AND not sent by us
+        unread  = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE is_read = 0 AND sender != ?", (own_number,)
+        ).fetchone()[0]
         oldest  = conn.execute("SELECT MIN(timestamp) FROM messages").fetchone()[0]
         newest  = conn.execute("SELECT MAX(timestamp) FROM messages").fetchone()[0]
         db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0

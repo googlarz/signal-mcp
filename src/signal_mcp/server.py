@@ -1051,12 +1051,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             total = await asyncio.to_thread(
                 _store.count_conversation, arguments["recipient"], since=since
             )
-            # Mark incoming messages as read in the local store — they've now been
-            # seen by Claude.  Does NOT send a Signal read receipt to the sender;
-            # call send_read_receipt for that.
-            unread_ids = [m.id for m in messages if not m.is_read and m.recipient is None]
-            if unread_ids:
-                await asyncio.to_thread(_store.mark_as_read, unread_ids)
+            # client.get_conversation already marks incoming messages as read
             return _ok({
                 "messages": [client._enrich_message(m) for m in messages],
                 "total": total,
@@ -1190,7 +1185,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok(result)
 
         elif name == "store_stats":
-            return _ok(_store.get_stats())
+            return _ok(_store.get_stats(own_number=client.account))
 
         elif name == "import_desktop":
             from .desktop import import_from_desktop, DesktopImportError

@@ -1339,3 +1339,90 @@ async def test_submit_rate_limit_challenge():
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "submitRateLimitChallenge"
     assert req_body["params"]["challenge"] == "abc123"
+
+
+# ── Bug-fix regression tests ──────────────────────────────────────────────────
+
+# Bug 2: get_unread limit+1 probe — the extra message must not be silently consumed
+@pytest.mark.asyncio
+async def test_get_unread_has_more_does_not_consume_extra():
+    """When exactly limit+1 unread messages exist, the (limit+1)th must remain unread."""
+    from datetime import timedelta
+    _store_mod.init_db()
+    now = datetime(2024, 6, 1, 12, 0, 0)
+    # Insert 3 unread messages; call with limit=2 → expects has_more=True
+    for i in range(3):
+        _store_mod.save_message(Message(
+            id=f"hm_{i}",
+            sender="+12223334444",
+            body=f"msg {i}",
+            timestamp=now + timedelta(seconds=i),
+            is_read=False,
+        ))
+    result = await call_tool("get_unread", {"limit": 2})
+    data = json.loads(result[0].text)
+    assert data["has_more"] is True
+    assert len(data["messages"]) == 2
+    # Only 2 messages marked read; the 3rd must still be unread
+    remaining = _store_mod.get_unread_messages(own_number="+10000000000")
+    assert len(remaining) == 1, "The (limit+1)th message must NOT be consumed"
+
+
+@pytest.mark.asyncio
+async def test_get_unread_has_more_false_when_exact_limit():
+    """When exactly limit messages exist, has_more must be False."""
+    _store_mod.init_db()
+    now = datetime(2024, 6, 1, 12, 0, 0)
+    from datetime import timedelta
+    for i in range(2):
+        _store_mod.save_message(Message(
+            id=f"exact_{i}",
+            sender="+12223334444",
+            body=f"msg {i}",
+            timestamp=now + timedelta(seconds=i),
+            is_read=False,
+        ))
+    result = await call_tool("get_unread", {"limit": 2})
+    data = json.loads(result[0].text)
+    assert data["has_more"] is False
+    assert len(data["messages"]) == 2
+    # Both messages marked read
+    assert _store_mod.get_unread_messages(own_number="+10000000000") == []
+
+
+# Bug 5: dead mark_as_read block in get_conversation — verify no double-marking
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_conversation_marks_incoming_as_read():
+    """get_conversation must mark incoming messages as read exactly once."""
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="cv_in1", sender="+12223334444", body="hello conv",
+        timestamp=datetime(2024, 6, 1), is_read=False,
+    ))
+    assert len(_store_mod.get_unread_messages(own_number="+10000000000")) == 1
+    result = await call_tool("get_conversation", {"recipient": "+12223334444"})
+    data = json.loads(result[0].text)
+    assert len(data["messages"]) == 1
+    # After viewing the conversation, message must be marked read
+    assert _store_mod.get_unread_messages(own_number="+10000000000") == []
+
+
+# store_stats unread count must match get_unread_messages
+@pytest.mark.asyncio
+async def test_store_stats_unread_count_consistent():
+    """store_stats unread_messages must match get_unread_messages count."""
+    own = "+10000000000"
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="stat_recv", sender="+2", body="hi", timestamp=datetime(2024, 6, 1),
+    ))
+    # Outgoing — must not count as unread
+    _store_mod.save_message(Message(
+        id="stat_sent", sender=own, recipient="+2", body="hello",
+        timestamp=datetime(2024, 6, 1), is_read=True,
+    ))
+    result = await call_tool("store_stats", {})
+    stats = json.loads(result[0].text)
+    unread_list = _store_mod.get_unread_messages(own_number=own)
+    assert stats["unread_messages"] == len(unread_list) == 1

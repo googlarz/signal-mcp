@@ -323,6 +323,7 @@ class SignalClient:
             timestamp=datetime.fromtimestamp(ts / 1000),
             group_id=group_id,
             quote_id=str(quote_timestamp) if quote_timestamp else None,
+            is_read=True,  # sent by us, already "read"
         ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
@@ -380,6 +381,7 @@ class SignalClient:
             body=caption,
             timestamp=datetime.fromtimestamp(ts / 1000),
             group_id=group_id,
+            is_read=True,  # sent by us, already "read"
         ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
@@ -421,6 +423,7 @@ class SignalClient:
             body=f"[sticker {pack_id}:{sticker_id}]",
             timestamp=datetime.fromtimestamp(ts / 1000),
             group_id=group_id,
+            is_read=True,  # sent by us, already "read"
         ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
 
@@ -835,6 +838,8 @@ class SignalClient:
         for conv in convs:
             if conv["type"] == "direct":
                 conv["name"] = self.resolve_name(conv["id"])
+            elif conv["type"] == "group":
+                conv["name"] = self.resolve_group_name(conv["id"])
         return convs
 
     async def clear_local_store(self) -> int:
@@ -855,13 +860,10 @@ class SignalClient:
         return await asyncio.to_thread(_store.export_messages, fmt, recipient, since)
 
     async def get_unread_messages(self, limit: int = 50) -> list[Message]:
-        messages = await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)
-        # Auto-mark as read (consistent with get_conversation)
-        if messages:
-            await asyncio.to_thread(_store.mark_as_read, [m.id for m in messages])
-            for m in messages:
-                m.is_read = True
-        return messages
+        # NOTE: does NOT auto-mark as read — the server handler does that explicitly
+        # after trimming the limit+1 probe, preventing the extra message from being
+        # silently consumed.
+        return await asyncio.to_thread(_store.get_unread_messages, own_number=self.account, limit=limit)
 
     def get_own_number(self) -> str:
         return self.account
@@ -1015,7 +1017,7 @@ class SignalClient:
         else:
             params["recipient"] = [recipient]
         await self._rpc("editMessage", params)
-        await asyncio.to_thread(_store.update_message_body, target_timestamp, message)
+        await asyncio.to_thread(_store.update_message_body, target_timestamp, message, self.account)
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
         await self._rpc("sendReceipt", {
