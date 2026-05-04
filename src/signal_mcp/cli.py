@@ -233,6 +233,88 @@ def edit(recipient: str, timestamp: int, message: str):
         sys.exit(1)
 
 
+# ── react ────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("recipient")
+@click.argument("timestamp", type=int)
+@click.argument("author")
+@click.argument("emoji")
+@click.option("--remove", is_flag=True, help="Remove the reaction instead of adding it")
+def react(recipient: str, timestamp: int, author: str, emoji: str, remove: bool):
+    """React to a message with EMOJI. RECIPIENT is a phone number or group ID."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            if recipient.startswith("+"):
+                await client.react_to_message(author, timestamp, emoji, remove=remove, recipient=recipient)
+            else:
+                await client.react_to_message(author, timestamp, emoji, remove=remove, group_id=recipient)
+            action = "removed" if remove else "sent"
+            click.echo(f"Reaction {emoji} {action}.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── delete ───────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("recipient")
+@click.argument("timestamp", type=int)
+def delete(recipient: str, timestamp: int):
+    """Delete a message you sent. RECIPIENT is a phone number or group ID."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            if recipient.startswith("+"):
+                await client.delete_message(recipient, timestamp)
+            else:
+                await client.delete_group_message(recipient, timestamp)
+            click.echo("Message deleted.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── block / unblock ───────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("number")
+def block(number: str):
+    """Block a contact or group by phone number or group ID."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            await client.block_contact(number)
+            click.echo(f"Blocked {number}.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("number")
+def unblock(number: str):
+    """Unblock a contact or group."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            await client.unblock_contact(number)
+            click.echo(f"Unblocked {number}.")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 # ── search ────────────────────────────────────────────────────────────────────
 
 @cli.command()
@@ -359,6 +441,22 @@ def store_stats():
     click.echo(f"Total messages : {stats['total_messages']}")
     click.echo(f"Oldest         : {stats['oldest'] or 'n/a'}")
     click.echo(f"Newest         : {stats['newest'] or 'n/a'}")
+
+
+# ── prune ─────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--days", default=180, show_default=True, help="Delete messages older than this many days")
+@click.option("--yes", "confirmed", is_flag=True, help="Skip confirmation prompt")
+def prune(days: int, confirmed: bool):
+    """Delete locally stored messages older than N days."""
+    if days <= 0:
+        click.echo("Error: --days must be a positive integer.", err=True)
+        sys.exit(1)
+    if not confirmed:
+        click.confirm(f"Delete all locally stored messages older than {days} days?", abort=True)
+    deleted = _store.prune_old_messages(days)
+    click.echo(f"Deleted {deleted} message(s) older than {days} days.")
 
 
 # ── import-desktop ────────────────────────────────────────────────────────────
