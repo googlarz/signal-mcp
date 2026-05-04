@@ -125,11 +125,15 @@ TOOLS = [
     Tool(
         name="edit_message",
         description=(
-            "Edit the text of a message you previously sent. Signal delivers the edit to all recipients; "
-            "they see the updated text with an '(edited)' indicator. Only the text can be edited — "
-            "attachments, reactions, and quoted messages cannot be changed. "
-            "Provide recipient for DM edits or group_id for group edits. "
-            "Get target_timestamp from get_conversation or the original send_message response."
+            "Edit the text of a previously sent message. "
+            "Sends the edit via signal-cli to all original recipients; they see the updated text inline with an '(edited)' label. "
+            "Only the message text can be modified — attachments, quoted replies, and reactions are immutable. "
+            "The edit must reference the exact timestamp of the original message as returned by send_message or get_conversation. "
+            "Edits can only be made to messages you sent; editing someone else's message returns an error. "
+            "There is no enforced time limit, but Signal clients may ignore edits on very old messages. "
+            "Provide recipient for a DM edit or group_id for a group edit; exactly one is required. "
+            "Use when correcting a typo or updating information in a message you already sent. "
+            "Do NOT use to change who a message was sent to — send a new message instead."
         ),
         inputSchema={
             "type": "object",
@@ -232,11 +236,16 @@ TOOLS = [
     Tool(
         name="send_group_attachment",
         description=(
-            "Send one or more files or images to a Signal group. All group members receive the attachment. "
-            "Supports photos, videos, documents, and audio files. "
-            "Use path for a single file or paths to send multiple files in one message. "
-            "Set view_once=true for media that disappears after each member's first view. "
-            "Use list_groups to find the group_id. For direct messages use send_attachment instead."
+            "Send one or more files (photos, videos, documents, audio) to a Signal group in a single message. "
+            "All current group members receive the attachment via the normal Signal encrypted delivery pipeline. "
+            "Provide path for a single file or paths for multiple files sent together in one message. "
+            "Set view_once=true so each member can only open the media once before it disappears — "
+            "ideal for sensitive images; does not apply to document types. "
+            "The file must exist and be readable on the local filesystem; non-existent paths return an error. "
+            "Use list_groups to obtain the group_id. "
+            "Use when sharing a file with a group chat. "
+            "Do NOT use for direct messages — use send_attachment instead. "
+            "Do NOT use when you only want to send text — use send_group_message instead."
         ),
         inputSchema={
             "type": "object",
@@ -269,11 +278,16 @@ TOOLS = [
     Tool(
         name="set_typing",
         description=(
-            "Send a typing indicator to a Signal contact, showing them that you are composing a message. "
-            "The indicator is ephemeral — it auto-expires after approximately 15 seconds if not followed by a message. "
-            "Call with stop=true to cancel an active typing indicator before it expires naturally. "
-            "Typing indicators only work for direct messages, not groups. "
-            "Note: the contact must have typing indicators enabled in their Signal settings to receive it."
+            "Send a 'typing…' indicator to a Signal contact to show you are composing a message. "
+            "The indicator appears immediately in the recipient's conversation and auto-expires after ~15 seconds "
+            "if no message is sent — you do not need to call stop=true after sending the message. "
+            "Call with stop=true to cancel an in-progress typing indicator early (e.g. if the user abandons the message). "
+            "signal-cli relays the indicator via the Signal protocol; if the recipient has typing indicators "
+            "disabled in their settings, it is silently ignored on their end — no error is returned. "
+            "Typing indicators are only supported for one-to-one DMs; passing a group_id is not valid. "
+            "Use before send_message to create a realistic 'typing' effect in an automated workflow. "
+            "Do NOT use for groups — group typing indicators are not supported by Signal. "
+            "Do NOT call repeatedly in a tight loop; one call per composing session is sufficient."
         ),
         inputSchema={
             "type": "object",
@@ -303,11 +317,16 @@ TOOLS = [
     Tool(
         name="block_contact",
         description=(
-            "Block a Signal contact, preventing them from sending you messages or calls. "
-            "The blocked contact is NOT notified of the block. "
-            "Their messages will be silently discarded; they will not see delivery confirmations. "
-            "The block is stored locally — use unblock_contact to reverse it. "
-            "Note: blocking does not delete existing message history."
+            "Block a Signal contact so they can no longer send you messages or call you. "
+            "The block is applied locally via signal-cli and propagated to the Signal network. "
+            "The blocked contact receives NO notification — from their perspective, messages appear sent "
+            "but are silently discarded before reaching you; delivery receipts are suppressed. "
+            "Blocking does not delete existing message history; prior conversations remain in your local store. "
+            "The block persists across restarts and is reversible — call unblock_contact to lift it. "
+            "Use when you want to permanently stop receiving messages from a contact. "
+            "Use unblock_contact to reverse the block. "
+            "Do NOT use as a temporary mute — blocking hides the contact from normal message flow entirely. "
+            "Do NOT use to remove a contact from your list — use remove_contact for that."
         ),
         inputSchema={
             "type": "object",
@@ -570,11 +589,17 @@ TOOLS = [
     Tool(
         name="pin_message",
         description=(
-            "Pin a message in a DM or group conversation. Pinned messages appear prominently in the "
-            "conversation header, making them easy to find later. "
-            "Provide either recipient (for DMs) or group_id (for groups) — exactly one is required. "
-            "Get target_author and target_timestamp from get_conversation. "
-            "Use unpin_message to remove a pinned message."
+            "Pin a message in a DM or group conversation so it appears prominently in the conversation header. "
+            "Pinning delivers a system-level pin notification to all participants via signal-cli; "
+            "they see the pinned message highlighted at the top of the thread. "
+            "Any participant can pin any message — admin privileges are not required. "
+            "Only one message can be pinned per conversation at a time; pinning a new message "
+            "automatically replaces the previous pin. "
+            "Provide exactly one of recipient (for a DM) or group_id (for a group). "
+            "Get target_author and target_timestamp from get_conversation — both are required to identify the message. "
+            "Use unpin_message to remove a pinned message without replacing it. "
+            "Use when you want to highlight an important message for all participants. "
+            "Do NOT use if you only want to bookmark a message for yourself — pinning is visible to everyone."
         ),
         inputSchema={
             "type": "object",
@@ -636,9 +661,16 @@ TOOLS = [
     Tool(
         name="update_device",
         description=(
-            "Rename a linked device on your Signal account. The new name is visible in your Signal "
-            "app's linked devices list. Use list_devices to see all linked devices and their IDs. "
-            "To unlink a device entirely, use remove_device."
+            "Rename a linked secondary device on your Signal account. "
+            "The updated name is synced to the Signal network and appears immediately in your Signal app's "
+            "Settings → Linked Devices list across all your devices. "
+            "Only secondary (linked) devices can be renamed; the primary device name is set during registration. "
+            "Use list_devices to find all linked device IDs and their current names. "
+            "The device_id is a small integer (e.g. 2, 3); device 1 is always the primary. "
+            "Renaming does not affect the device's ability to send or receive messages. "
+            "Use when you want to distinguish between multiple linked devices by a meaningful label. "
+            "Use remove_device to unlink a device entirely. "
+            "Do NOT use to rename your own primary account — that is done via update_profile."
         ),
         inputSchema={
             "type": "object",
@@ -707,11 +739,18 @@ TOOLS = [
     Tool(
         name="vote_poll",
         description=(
-            "Cast a vote on an active Signal poll. Your vote is delivered to all conversation participants. "
-            "Get target_author, target_timestamp, and poll_id from the poll message in get_conversation. "
-            "For single-choice polls, provide one index in votes. For multi-select polls, list all chosen indices. "
-            "Provide either recipient (DM poll) or group_id (group poll). "
-            "Use terminate_poll to close a poll you created."
+            "Cast your vote on an active Signal poll in a DM or group conversation. "
+            "Your vote is delivered via signal-cli and is visible to all participants in real time. "
+            "Each participant can vote once; re-voting overwrites the previous selection. "
+            "For single-choice polls, provide exactly one option index in votes. "
+            "For multi-select polls, provide all chosen indices in a single call — partial updates are not supported. "
+            "votes are 0-based indices corresponding to the options array from the original create_poll call. "
+            "Get target_author, target_timestamp, and poll_id from the poll message returned by get_conversation. "
+            "Provide exactly one of recipient (for a DM poll) or group_id (for a group poll). "
+            "Voting on a terminated poll returns an error. "
+            "Use terminate_poll to close a poll you created and freeze the results. "
+            "Use when responding to an open poll in a conversation. "
+            "Do NOT use to create a poll — use create_poll instead."
         ),
         inputSchema={
             "type": "object",
@@ -866,10 +905,16 @@ TOOLS += [
     Tool(
         name="send_sticker",
         description=(
-            "Send a sticker to a Signal contact. "
-            "Use list_sticker_packs to browse installed packs and find pack_id and sticker_id values. "
-            "If no packs are installed, use add_sticker_pack first with a signal.art URL. "
-            "For groups use send_group_sticker instead."
+            "Send a single sticker to a Signal contact in a direct message. "
+            "Stickers are small images from installed packs delivered as a distinct message type — "
+            "they appear rendered in the conversation, not as a file attachment. "
+            "Both pack_id (a hex string) and sticker_id (a 0-based integer) must match an installed pack; "
+            "referencing an uninstalled pack or an invalid sticker_id returns an error. "
+            "Use list_sticker_packs to browse all installed packs and retrieve valid pack_id and sticker_id values. "
+            "If no packs are installed, call add_sticker_pack first with a signal.art URL to install one. "
+            "Use when you want to send an expressive image reaction or decoration to a contact. "
+            "Use send_group_sticker to send a sticker to a group instead of a DM. "
+            "Do NOT use to send a regular image file — use send_attachment for that."
         ),
         inputSchema={
             "type": "object",
@@ -884,10 +929,17 @@ TOOLS += [
     Tool(
         name="send_group_sticker",
         description=(
-            "Send a sticker to a Signal group. All group members receive the sticker. "
-            "Use list_sticker_packs to browse installed packs and find pack_id and sticker_id values. "
-            "If no packs are installed, use add_sticker_pack first with a signal.art URL. "
-            "Use list_groups to find the group_id. For direct messages use send_sticker instead."
+            "Send a single sticker to a Signal group so all members receive it. "
+            "Stickers are small images from installed packs delivered as a distinct message type — "
+            "they appear rendered in the group conversation, not as a file attachment. "
+            "Both pack_id (a hex string) and sticker_id (a 0-based integer) must match an installed pack; "
+            "referencing an uninstalled pack or invalid sticker_id returns an error. "
+            "Use list_sticker_packs to browse installed packs and retrieve valid pack_id and sticker_id values. "
+            "If no packs are installed, call add_sticker_pack first with a signal.art URL to install one. "
+            "Use list_groups to obtain the group_id. "
+            "Use when sending an expressive image reaction or decoration to a group chat. "
+            "Use send_sticker for direct messages instead of group chats. "
+            "Do NOT use to send a regular image file — use send_group_attachment for that."
         ),
         inputSchema={
             "type": "object",
