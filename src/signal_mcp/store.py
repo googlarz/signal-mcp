@@ -480,11 +480,15 @@ def prune_old_messages(days: int = 180) -> int:
 def get_stats() -> dict:
     init_db()
     with _db() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        oldest = conn.execute("SELECT MIN(timestamp) FROM messages").fetchone()[0]
-        newest = conn.execute("SELECT MAX(timestamp) FROM messages").fetchone()[0]
+        total   = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        unread  = conn.execute("SELECT COUNT(*) FROM messages WHERE is_read = 0 AND recipient IS NULL").fetchone()[0]
+        oldest  = conn.execute("SELECT MIN(timestamp) FROM messages").fetchone()[0]
+        newest  = conn.execute("SELECT MAX(timestamp) FROM messages").fetchone()[0]
+        db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
     return {
         "total_messages": total,
+        "unread_messages": unread,
+        "db_size_bytes": db_size,
         "oldest": datetime.fromtimestamp(oldest / 1000).isoformat() if oldest else None,
         "newest": datetime.fromtimestamp(newest / 1000).isoformat() if newest else None,
     }

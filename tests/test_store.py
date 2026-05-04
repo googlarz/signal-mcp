@@ -276,7 +276,9 @@ def test_list_conversations_last_message():
 def test_get_stats_empty():
     stats = store.get_stats()
     assert stats["total_messages"] == 0
+    assert stats["unread_messages"] == 0
     assert stats["oldest"] is None
+    assert "db_size_bytes" in stats
 
 
 def test_get_stats_with_data():
@@ -285,6 +287,14 @@ def test_get_stats_with_data():
     assert stats["total_messages"] == 1
     assert stats["oldest"] is not None
     assert stats["newest"] is not None
+
+
+def test_get_stats_unread_count():
+    # Incoming (no recipient) → unread; outgoing (recipient set) → read
+    store.save_message(make_msg(id="u_in",  sender="+1", recipient=None))
+    store.save_message(make_msg(id="u_out", sender="+1", recipient="+2"))
+    stats = store.get_stats()
+    assert stats["unread_messages"] == 1
 
 
 # ── init_db migration ─────────────────────────────────────────────────────────

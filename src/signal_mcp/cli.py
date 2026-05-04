@@ -438,7 +438,10 @@ def stop():
 def store_stats():
     """Show stats about locally stored messages."""
     stats = _store.get_stats()
+    db_kb = stats["db_size_bytes"] / 1024
     click.echo(f"Total messages : {stats['total_messages']}")
+    click.echo(f"Unread         : {stats['unread_messages']}")
+    click.echo(f"DB size        : {db_kb:.1f} KB")
     click.echo(f"Oldest         : {stats['oldest'] or 'n/a'}")
     click.echo(f"Newest         : {stats['newest'] or 'n/a'}")
 
