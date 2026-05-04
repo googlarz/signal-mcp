@@ -359,23 +359,17 @@ def clear_store() -> int:
 def delete_conversation_messages(recipient: str) -> int:
     """Delete all locally stored messages for one contact or group. Returns count deleted."""
     init_db()
+    _where = "group_id = ? OR (group_id IS NULL AND (sender = ? OR recipient = ?))"
+    params = (recipient, recipient, recipient)
     with _db() as conn:
-        params = (recipient, recipient, recipient)
-        count = conn.execute(
-            """SELECT COUNT(*) FROM messages
-               WHERE group_id = ? OR (group_id IS NULL AND (sender = ? OR recipient = ?))""",
-            params,
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM messages WHERE {_where}", params).fetchone()[0]
         if count == 0:
             return 0
-        ids = [r[0] for r in conn.execute(
-            """SELECT id FROM messages
-               WHERE group_id = ? OR (group_id IS NULL AND (sender = ? OR recipient = ?))""",
+        conn.execute(
+            f"DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE {_where})",
             params,
-        ).fetchall()]
-        ph = ",".join("?" * len(ids))
-        conn.execute(f"DELETE FROM attachments WHERE message_id IN ({ph})", ids)
-        conn.execute(f"DELETE FROM messages WHERE id IN ({ph})", ids)
+        )
+        conn.execute(f"DELETE FROM messages WHERE {_where}", params)
         conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
     return count
 
@@ -459,22 +453,25 @@ def prune_old_messages(days: int = 180) -> int:
     """Delete messages older than *days* days. Returns count deleted.
 
     FTS and attachments are cleaned up too.  Default is 180 days (6 months).
+    Uses subqueries instead of IN (?, ?, ...) to avoid SQLite's variable limit.
     """
     if days <= 0:
         raise ValueError("days must be a positive integer")
     init_db()
     cutoff_ms = int((datetime.now().timestamp() - days * 86400) * 1000)
     with _db() as conn:
-        ids = [r[0] for r in conn.execute(
-            "SELECT id FROM messages WHERE timestamp < ?", (cutoff_ms,)
-        ).fetchall()]
-        if not ids:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE timestamp < ?", (cutoff_ms,)
+        ).fetchone()[0]
+        if count == 0:
             return 0
-        ph = ",".join("?" * len(ids))
-        conn.execute(f"DELETE FROM attachments WHERE message_id IN ({ph})", ids)
-        conn.execute(f"DELETE FROM messages WHERE id IN ({ph})", ids)
+        conn.execute(
+            "DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE timestamp < ?)",
+            (cutoff_ms,),
+        )
+        conn.execute("DELETE FROM messages WHERE timestamp < ?", (cutoff_ms,))
         conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
-    return len(ids)
+    return count
 
 
 def get_stats() -> dict:
