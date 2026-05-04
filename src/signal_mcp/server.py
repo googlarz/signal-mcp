@@ -18,7 +18,7 @@ _client: SignalClient | None = None
 
 # Tools that don't need the signal-cli daemon (read from local store only)
 _DAEMON_FREE = {
-    "import_desktop", "store_stats",
+    "import_desktop", "sync_desktop", "store_stats",
     "get_conversation", "search_messages", "get_own_number",
     "list_attachments", "get_attachment",
     "clear_local_store", "delete_local_messages", "export_messages",
@@ -372,7 +372,12 @@ TOOLS = [
     ),
     Tool(
         name="import_desktop",
-        description="Import all historical messages from Signal Desktop (macOS/Linux). Requires sqlcipher. On macOS prompts for Keychain access; on Linux uses libsecret/GNOME Keyring.",
+        description="Full one-time import of all historical messages from Signal Desktop (macOS/Linux). Requires sqlcipher. On macOS prompts for Keychain access; on Linux uses libsecret/GNOME Keyring. For ongoing sync use sync_desktop instead.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="sync_desktop",
+        description="Incremental sync from Signal Desktop: imports only messages newer than the last sync. Fast on repeat calls. On first call behaves like import_desktop (imports everything). Requires sqlcipher.",
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -1195,6 +1200,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             except DesktopImportError as e:
                 return _err(str(e))
 
+        elif name == "sync_desktop":
+            from .desktop import sync_from_desktop, DesktopImportError
+            try:
+                result = sync_from_desktop()
+                return _ok(result)
+            except DesktopImportError as e:
+                return _err(str(e))
+
         elif name == "list_conversations":
             await client._ensure_contact_cache()
             await client._ensure_group_cache()
@@ -1507,7 +1520,7 @@ async def _freshen_store(client: SignalClient) -> str | None:
     return _SERVICE_WARNING
 
 
-async def serve() -> None:
+async def serve() -> None:  # pragma: no cover
     check_signal_cli_version()
     _store.init_db()
     client = get_client()

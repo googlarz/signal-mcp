@@ -409,13 +409,13 @@ def daemon(port: int):
 
     click.echo(f"Starting signal-cli daemon for {account} on port {port}…")
     click.echo("Press Ctrl+C to stop.")
-    try:
+    try:  # pragma: no cover
         subprocess.run([
             "signal-cli", "-u", account,
             "daemon", f"--http", f"localhost:{port}",
             "--no-receive-stdout",
         ])
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:  # pragma: no cover
         click.echo("\nDaemon stopped.")
 
 
@@ -479,6 +479,30 @@ def import_desktop():
     try:
         result = import_from_desktop(progress_cb=progress)
         click.echo(f"\nDone: {result['imported']} imported, {result['skipped']} already stored ({result['total']} total)")
+    except DesktopImportError as e:
+        click.echo(f"\nError: {e}", err=True)
+        sys.exit(1)
+
+
+# ── sync-desktop ───────────────────────────────────────────────────────────────
+
+@cli.command("sync-desktop")
+def sync_desktop():
+    """Incremental sync from Signal Desktop (only new messages since last sync)."""
+    from .desktop import sync_from_desktop, DesktopImportError
+
+    def progress(msg):
+        click.echo(f"  {msg}")
+
+    click.echo("Syncing from Signal Desktop…")
+    click.echo("  Note: macOS may ask for Keychain access — click Allow.")
+    try:
+        result = sync_from_desktop(progress_cb=progress)
+        if result["incremental"]:
+            since_str = f" since {result['since']}" if result["since"] else ""
+            click.echo(f"\nDone: {result['imported']} imported, {result['skipped']} skipped ({result['total']} checked{since_str})")
+        else:
+            click.echo(f"\nFirst sync complete: {result['imported']} imported, {result['skipped']} already stored ({result['total']} total)")
     except DesktopImportError as e:
         click.echo(f"\nError: {e}", err=True)
         sys.exit(1)
@@ -724,5 +748,5 @@ def uninstall_service():
 @cli.command()
 def serve():
     """Start the MCP server (stdio transport, for Claude Code)."""
-    from .server import serve as _serve
-    asyncio.run(_serve())
+    from .server import serve as _serve  # pragma: no cover
+    asyncio.run(_serve())  # pragma: no cover

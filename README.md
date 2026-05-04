@@ -7,6 +7,8 @@
 
 signal-mcp is a layer on top of [signal-cli](https://github.com/AsamK/signal-cli) that adds everything it's missing: persistent message history, full-text search, a usable conversation view, contact name resolution, and an MCP server so Claude can read, search, and act on your Signal messages. 100% local — no cloud, no third-party services.
 
+> **v1.29.0** — New `sync_desktop` / `sync-desktop`: incremental sync from Signal Desktop — fast on repeat calls, imports only new messages since the last run. Plus: incoming edits update the stored copy in-place, fixes for 500+ conversation crashes, improved store reliability.
+
 ## What signal-cli is missing — and what signal-mcp adds
 
 **No history.** signal-cli delivers a message and forgets it. signal-mcp stores every sent and received message — including messages sent from your phone — in a local SQLite database. It stays there. You can search it, browse it, export it, and ask Claude about it.
@@ -44,7 +46,8 @@ The CLI and MCP server share the same store and daemon. You don't have to choose
 - **Background service** — captures messages automatically, even when Claude isn't running
 - **Export** — JSON or CSV with recipient and date filters
 - **Contact name resolution** — phone numbers resolved to names everywhere
-- **71 MCP tools** — complete signal-cli coverage (see [coverage matrix](#signal-cli-coverage))
+- **72 MCP tools** — complete signal-cli coverage (see [coverage matrix](#signal-cli-coverage))
+- **Incoming edit handling** — when contacts edit their messages, the stored copy updates in-place
 - **Full CLI** — all the above without Claude, from your terminal
 - **100% local** — your data never leaves your machine
 
@@ -184,7 +187,7 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 | `send_note_to_self` | Save a note to yourself (Signal's saved messages). |
 | `receive_messages` | Poll for new incoming messages and delivery receipts. |
 | `get_unread` | Get messages not yet marked as read from local store. |
-| `edit_message` | Edit a previously sent message (DM or group). Updates local store. |
+| `edit_message` | Edit a previously sent message (DM or group). Updates local store. Incoming edits from contacts also update the stored copy in-place. |
 | `delete_message` | Remote-delete (unsend) a sent DM. |
 | `delete_group_message` | Remote-delete a sent group message. |
 | `react_to_message` | React to a message with an emoji (DM or group). Set `remove=true` to unreact. |
@@ -283,7 +286,8 @@ signal-mcp install-service   # starts on login, works on macOS and Linux
 
 | Tool | Description |
 |---|---|
-| `import_desktop` | Import full message history from Signal Desktop (macOS/Linux/Windows). Requires sqlcipher. |
+| `import_desktop` | One-time full import of all historical messages from Signal Desktop. Requires sqlcipher. |
+| `sync_desktop` | Incremental sync from Signal Desktop — imports only messages newer than the last sync. Fast on repeat calls. First call behaves like `import_desktop`. |
 | `list_attachments` | List all locally downloaded attachments (photos, files received via Signal). |
 | `get_attachment` | Get details about a specific downloaded attachment by filename. |
 | `clear_local_store` | Delete ALL locally stored messages (requires `confirm: true`). Does not unsend from Signal. |
@@ -340,8 +344,9 @@ signal-mcp export messages.csv --format csv                # CSV format
 signal-mcp export --recipient +1234567890 --format csv     # one conversation
 signal-mcp export --since 2024-01-01                       # messages from date
 
-# Signal Desktop import (macOS)
+# Signal Desktop import (macOS) — one-time full import
 signal-mcp import-desktop
+signal-mcp sync-desktop                    # incremental: only new messages since last sync
 
 # Background service (macOS LaunchAgent or Linux systemd)
 signal-mcp install-service    # auto-starts on login, captures all messages
@@ -405,7 +410,7 @@ The daemon starts automatically on first use. Attachments are saved to `~/Downlo
 
 signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli.1.adoc). Here's what is and isn't covered:
 
-### Covered (71 tools)
+### Covered (72 tools)
 
 | signal-cli command | signal-mcp tool |
 |---|---|
@@ -449,7 +454,7 @@ signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signa
 | `startChangeNumber` / `finishChangeNumber` | `start_change_number` / `finish_change_number` |
 | `submitRateLimitChallenge` | `submit_rate_limit_challenge` |
 
-Plus tools with no direct signal-cli equivalent: `get_conversation`, `search_messages`, `list_conversations`, `store_stats`, `import_desktop`, `export_messages`, `mark_as_unread`, `clear_local_store`, `delete_local_messages`, `prune_store`.
+Plus tools with no direct signal-cli equivalent: `get_conversation`, `search_messages`, `list_conversations`, `store_stats`, `import_desktop`, `sync_desktop`, `export_messages`, `mark_as_unread`, `clear_local_store`, `delete_local_messages`, `prune_store`.
 
 ### Not covered
 
@@ -472,7 +477,7 @@ uv run pytest
 uv run pytest --cov --cov-report=term-missing
 ```
 
-All tests are fully mocked — no signal-cli installation or Signal account required to run them.
+573 tests, 100% line coverage across all modules. All tests are fully mocked — no signal-cli installation or Signal account required to run them.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add new tools.
 

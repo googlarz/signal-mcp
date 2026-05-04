@@ -493,6 +493,25 @@ class SignalClient:
         result = await self._rpc("receive", {"timeout": timeout}, timeout=timeout + 5.0)
         messages = []
         for envelope in result if isinstance(result, list) else []:
+            # Intercept incoming edits: update existing message body rather than saving a new ghost
+            data = envelope.get("envelope", envelope)
+            edit_sender = data.get("source", "") or data.get("sourceNumber", "")
+            dm = data.get("dataMessage") or {}
+            edit = dm.get("editMessage")
+            if not edit:
+                sync_sent = (data.get("syncMessage") or {}).get("sentMessage") or {}
+                edit = sync_sent.get("editMessage")
+                if edit:
+                    edit_sender = self.account  # sync edits originated from us
+            if edit:
+                target_ts = edit.get("targetSentTimestamp")
+                new_body = (edit.get("dataMessage") or {}).get("message", "") or ""
+                if target_ts:
+                    await asyncio.to_thread(
+                        _store.update_message_body, target_ts, new_body, edit_sender or None
+                    )
+                continue
+
             msg = self._parse_envelope(envelope)
             if msg:
                 if not msg.receipt_type:

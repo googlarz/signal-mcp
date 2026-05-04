@@ -233,8 +233,11 @@ def _find_sqlcipher() -> str:
     )
 
 
-def _read_messages_from_plain_db(plain_db: Path, own_number: str = "") -> list[Message]:
-    """Parse Signal Desktop's messages table into our Message model."""
+def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms: int = 0) -> list[Message]:
+    """Parse Signal Desktop's messages table into our Message model.
+
+    since_ms: if > 0, only return messages with sent_at or received_at > since_ms.
+    """
     conn = sqlite3.connect(str(plain_db))
     conn.row_factory = sqlite3.Row
     messages = []
@@ -257,7 +260,9 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "") -> list[M
             LEFT JOIN conversations c ON c.id = m.conversationId
             WHERE m.type IN ('incoming', 'outgoing')
               AND (m.body IS NOT NULL OR m.hasAttachments = 1)
-            ORDER BY m.sent_at ASC"""
+              AND COALESCE(m.sent_at, m.received_at, 0) > ?
+            ORDER BY m.sent_at ASC""",
+            (since_ms,),
         ).fetchall()
 
         for row in rows:
@@ -294,12 +299,13 @@ def _decode_group_id(raw: str | None) -> str | None:
     return raw
 
 
-def import_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dict:
+def import_from_desktop(progress_cb=None, signal_dir: Path | None = None, since_ms: int = 0) -> dict:
     """
     Full import pipeline: decrypt DB → parse → store.
     Returns {"imported": N, "skipped": N, "total": N, "platform": str, "source": str}.
 
     signal_dir: override the auto-detected Signal Desktop directory.
+    since_ms: if > 0, only import messages newer than this epoch-millisecond timestamp.
     """
     if signal_dir is not None:
         # Explicit override — construct paths from it
@@ -353,7 +359,7 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dic
             own_number = detect_account()
         except Exception:
             own_number = ""
-        messages = _read_messages_from_plain_db(plain_db, own_number=own_number)
+        messages = _read_messages_from_plain_db(plain_db, own_number=own_number, since_ms=since_ms)
         total = len(messages)
         imported = 0
         skipped = 0
@@ -376,3 +382,32 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dic
     finally:
         if plain_db is not None:
             plain_db.unlink(missing_ok=True)
+
+
+def sync_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dict:
+    """
+    Incremental sync from Signal Desktop: imports only messages newer than the last sync.
+
+    On the first call (no prior sync recorded) it imports everything — equivalent to
+    import_from_desktop.  Subsequent calls are fast because they skip already-seen messages.
+    Deduplication is handled atomically by INSERT OR IGNORE in the store, so messages
+    already imported by import_from_desktop are silently skipped.
+
+    Returns the import_from_desktop result dict plus:
+      "since":       ISO datetime of the lower-bound filter (None on first run)
+      "incremental": True if this was a delta sync, False if it was the first run
+    """
+    last_sync = _store.get_meta("desktop_last_sync")
+    # Subtract a 60-second overlap so messages right at the boundary are never missed;
+    # INSERT OR IGNORE deduplicates anything we've already stored.
+    since_ms = max(0, int(last_sync) - 60_000) if last_sync else 0
+
+    result = import_from_desktop(progress_cb=progress_cb, signal_dir=signal_dir, since_ms=since_ms)
+
+    # Record current wall-clock time as the new high-water mark
+    new_mark = str(int(datetime.now().timestamp() * 1000))
+    _store.set_meta("desktop_last_sync", new_mark)
+
+    result["since"] = datetime.fromtimestamp(since_ms / 1000).isoformat() if since_ms else None
+    result["incremental"] = last_sync is not None
+    return result

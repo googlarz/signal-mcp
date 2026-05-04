@@ -97,6 +97,10 @@ def init_db() -> None:
                 INSERT INTO messages_fts(messages_fts, rowid, id, body, sender)
                 VALUES ('delete', old.rowid, old.id, old.body, old.sender);
             END;
+            CREATE TABLE IF NOT EXISTS meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
         # Migrate: add recipient column if upgrading from pre-1.1 schema
         try:
@@ -118,25 +122,29 @@ def init_db() -> None:
 
 
 def save_message(msg: Message) -> bool:
-    """Save a message. Returns True if new, False if already stored."""
+    """Save a message. Returns True if new, False if already stored (duplicate id)."""
     init_db()
     with _db() as conn:
-        existing = conn.execute("SELECT id FROM messages WHERE id = ?", (msg.id,)).fetchone()
-        if existing:
-            return False
         # Outgoing messages are always read; incoming start as unread
         is_read = 1 if msg.recipient is not None else int(msg.is_read)
-        conn.execute(
-            "INSERT INTO messages (id, sender, recipient, body, timestamp, group_id, quote_id, is_read)"
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO messages"
+            " (id, sender, recipient, body, timestamp, group_id, quote_id, is_read)"
             " VALUES (?,?,?,?,?,?,?,?)",
             (msg.id, msg.sender, msg.recipient, msg.body,
              int(msg.timestamp.timestamp() * 1000),
              msg.group_id, msg.quote_id, is_read),
         )
-        for att in msg.attachments:
-            conn.execute(
-                "INSERT INTO attachments (message_id, content_type, filename, local_path, size) VALUES (?,?,?,?,?)",
-                (msg.id, att.content_type, att.filename, att.local_path, att.size),
+        if cur.rowcount == 0:
+            return False  # duplicate — AFTER INSERT trigger did NOT fire, FTS unchanged
+        if msg.attachments:
+            conn.executemany(
+                "INSERT INTO attachments"
+                " (message_id, content_type, filename, local_path, size) VALUES (?,?,?,?,?)",
+                [
+                    (msg.id, att.content_type, att.filename, att.local_path, att.size)
+                    for att in msg.attachments
+                ],
             )
     return True
 
@@ -310,31 +318,29 @@ def list_conversations(own_number: str = "") -> list[dict]:
                ORDER BY last_message_at DESC""",
             (own_number, own_number, own_number, own_number),
         ).fetchall()
-        # Fetch last message body for each conversation in one query
-        conv_ids = [r["id"] for r in rows]
+        # Fetch last message body per conversation using a window function —
+        # single table scan, no IN list, no variable-count risk.
         last_body: dict[str, str] = {}
-        if conv_ids:
-            ph = ",".join("?" * len(conv_ids))
+        if rows:
             snippet_rows = conn.execute(
-                f"""SELECT
-                        COALESCE(group_id,
-                            CASE WHEN sender = ? THEN recipient ELSE sender END
-                        ) AS conv_id,
-                        body
-                    FROM messages
-                    WHERE COALESCE(group_id,
-                            CASE WHEN sender = ? THEN recipient ELSE sender END
-                    ) IN ({ph})
-                    AND timestamp IN (
-                        SELECT MAX(timestamp) FROM messages
-                        WHERE COALESCE(group_id,
-                            CASE WHEN sender = ? THEN recipient ELSE sender END
-                        ) IN ({ph})
-                        GROUP BY COALESCE(group_id,
-                            CASE WHEN sender = ? THEN recipient ELSE sender END
-                        )
-                    )""",
-                [own_number, own_number] + conv_ids + [own_number] + conv_ids + [own_number],
+                """SELECT conv_id, body FROM (
+                       SELECT
+                           COALESCE(group_id,
+                               CASE WHEN sender = ? THEN recipient ELSE sender END
+                           ) AS conv_id,
+                           body,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY COALESCE(group_id,
+                                   CASE WHEN sender = ? THEN recipient ELSE sender END
+                               )
+                               ORDER BY timestamp DESC
+                           ) AS rn
+                       FROM messages
+                       WHERE COALESCE(group_id,
+                           CASE WHEN sender = ? THEN recipient ELSE sender END
+                       ) IS NOT NULL
+                   ) WHERE rn = 1""",
+                (own_number, own_number, own_number),
             ).fetchall()
             for s in snippet_rows:
                 last_body[s["conv_id"]] = s["body"]
@@ -505,32 +511,43 @@ def prune_old_messages(days: int = 180) -> int:
 def get_stats(own_number: str = "") -> dict:
     init_db()
     with _db() as conn:
-        total   = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        # Mirror get_unread_messages: unread = not read AND not sent by us
-        unread  = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE is_read = 0 AND sender != ?", (own_number,)
-        ).fetchone()[0]
-        oldest  = conn.execute("SELECT MIN(timestamp) FROM messages").fetchone()[0]
-        newest  = conn.execute("SELECT MAX(timestamp) FROM messages").fetchone()[0]
+        # Single scan: total, unread (not sent by us), oldest, newest
+        row = conn.execute(
+            """SELECT
+                   COUNT(*) AS total,
+                   COUNT(CASE WHEN is_read = 0 AND sender != ? THEN 1 END) AS unread,
+                   MIN(timestamp) AS oldest,
+                   MAX(timestamp) AS newest
+               FROM messages""",
+            (own_number,),
+        ).fetchone()
         db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
     return {
-        "total_messages": total,
-        "unread_messages": unread,
+        "total_messages": row["total"],
+        "unread_messages": row["unread"],
         "db_size_bytes": db_size,
-        "oldest": datetime.fromtimestamp(oldest / 1000).isoformat() if oldest else None,
-        "newest": datetime.fromtimestamp(newest / 1000).isoformat() if newest else None,
+        "oldest": datetime.fromtimestamp(row["oldest"] / 1000).isoformat() if row["oldest"] else None,
+        "newest": datetime.fromtimestamp(row["newest"] / 1000).isoformat() if row["newest"] else None,
     }
 
 
 def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[Message]:
-    """Convert a batch of message rows to Message objects in 2 queries (not N+1)."""
+    """Convert a batch of message rows to Message objects without N+1 queries.
+
+    Attachment lookup is chunked to stay under SQLite's variable limit so that
+    export_messages() with thousands of rows never raises OperationalError.
+    """
     if not rows:
         return []
     ids = [r["id"] for r in rows]
-    ph = ",".join("?" * len(ids))
-    att_rows = conn.execute(
-        f"SELECT * FROM attachments WHERE message_id IN ({ph})", ids
-    ).fetchall()
+    att_rows: list[sqlite3.Row] = []
+    for chunk in _chunked(ids, _SQLITE_MAX_VARS):
+        ph = ",".join("?" * len(chunk))
+        att_rows.extend(
+            conn.execute(
+                f"SELECT * FROM attachments WHERE message_id IN ({ph})", chunk
+            ).fetchall()
+        )
     # Group attachments by message_id
     att_map: dict[str, list[Attachment]] = {}
     for a in att_rows:
@@ -559,4 +576,23 @@ def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list
         for r in rows
     ]
 
+
+# ── meta key-value store ───────────────────────────────────────────────────────
+
+def get_meta(key: str) -> str | None:
+    """Return a stored metadata value, or None if not set."""
+    init_db()
+    with _db() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+def set_meta(key: str, value: str) -> None:
+    """Persist a metadata key-value pair (upsert)."""
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (key, value),
+        )
 

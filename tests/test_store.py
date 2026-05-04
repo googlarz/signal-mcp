@@ -768,3 +768,75 @@ def test_init_db_reinitializes_after_path_change(tmp_path, monkeypatch):
         store._thread_local.conn.close()
         store._thread_local.conn = None
     assert len(store.get_conversation("+1")) == 1
+
+
+# ── Performance regression: unbounded IN crash ────────────────────────────────
+
+def test_rows_to_messages_chunked_over_limit():
+    """export_messages with >500 messages must not raise 'too many SQL variables'.
+
+    Regression for the _rows_to_messages unbounded IN(?) bug.
+    """
+    store.init_db()
+    from datetime import datetime, timedelta
+    base = datetime(2024, 1, 1)
+    for i in range(600):
+        store.save_message(Message(
+            id=f"perf_{i}",
+            sender="+1999",
+            body=f"msg {i}",
+            timestamp=base + timedelta(seconds=i),
+        ))
+    # export_messages has no LIMIT — fetches all rows then calls _rows_to_messages
+    result = store.export_messages(fmt="json")
+    import json
+    data = json.loads(result)
+    assert len(data) == 600
+
+
+def test_list_conversations_over_497():
+    """list_conversations with 500+ conversations must not hit the SQL variable limit.
+
+    Regression for the snippet subquery passing conv_ids twice in two IN clauses:
+    total variables = 4 + 2*N, which exceeds 999 at N=498.
+    """
+    store.init_db()
+    from datetime import datetime, timedelta
+    base = datetime(2024, 1, 1)
+    for i in range(500):
+        store.save_message(Message(
+            id=f"conv_{i}",
+            sender=f"+{1000000 + i}",
+            body=f"hi from {i}",
+            timestamp=base + timedelta(seconds=i),
+        ))
+    convs = store.list_conversations(own_number="+0000000000")
+    assert len(convs) == 500
+    # Every conversation must have a last_message snippet
+    assert all(c["last_message"] != "" for c in convs)
+
+
+def test_save_message_concurrent_duplicate_no_race():
+    """INSERT OR IGNORE: calling save_message twice with the same id returns False on second call."""
+    store.init_db()
+    msg = make_msg(id="dup1", sender="+1", body="original")
+    assert store.save_message(msg) is True
+    # Second call with same id — must return False, not raise OperationalError
+    assert store.save_message(msg) is False
+    # Only one row stored
+    assert len(store.get_conversation("+1")) == 1
+
+
+def test_get_stats_single_query_result():
+    """get_stats must return consistent counts from a single scan."""
+    store.init_db()
+    from datetime import datetime
+    # Save 3 messages: 2 incoming unread, 1 outgoing read
+    store.save_message(Message(id="s1", sender="+2", body="a", timestamp=datetime(2024, 1, 1), is_read=False))
+    store.save_message(Message(id="s2", sender="+2", body="b", timestamp=datetime(2024, 1, 2), is_read=False))
+    store.save_message(Message(id="s3", sender="+1", recipient="+2", body="c", timestamp=datetime(2024, 1, 3)))
+    stats = store.get_stats(own_number="+1")
+    assert stats["total_messages"] == 3
+    assert stats["unread_messages"] == 2  # s3 is outgoing (sender == own_number), not counted
+    assert stats["oldest"] is not None
+    assert stats["newest"] is not None

@@ -1640,3 +1640,73 @@ async def test_list_conversations_resolves_group_names(client, monkeypatch):
     group_convs = [c for c in convs if c["type"] == "group"]
     assert len(group_convs) == 1
     assert group_convs[0].get("name") == "My Team"
+
+
+# Bug 7: incoming editMessage envelopes must update existing body, not create ghost messages
+@respx.mock
+@pytest.mark.asyncio
+async def test_receive_edit_message_updates_store(client):
+    """An incoming editMessage envelope must update the original message body, not save a new ghost."""
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    # Store the original message
+    _store_mod.save_message(Message(
+        id="1700000000000", sender="+13333333333", body="original text",
+        timestamp=_dt.fromtimestamp(1700000000000 / 1000), is_read=False,
+    ))
+    # Deliver an editMessage envelope from the same sender
+    edit_envelope = [{
+        "envelope": {
+            "source": "+13333333333",
+            "timestamp": 1700000001000,
+            "dataMessage": {
+                "editMessage": {
+                    "targetSentTimestamp": 1700000000000,
+                    "dataMessage": {"message": "edited text"},
+                }
+            },
+        }
+    }]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(edit_envelope)))
+    messages = await client.receive_messages(timeout=1)
+    # The edit is not surfaced as a new message
+    assert messages == []
+    # The stored body was updated
+    rows = _store_mod.search_messages("edited text")
+    assert len(rows) == 1
+    assert rows[0].body == "edited text"
+    # Original ghost message with empty body must NOT exist
+    ghosts = _store_mod.search_messages("original text")
+    assert ghosts == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_receive_sync_edit_message_updates_store(client):
+    """A syncMessage editMessage (own linked device) must update the stored body."""
+    from datetime import datetime as _dt
+    _store_mod.init_db()
+    _store_mod.save_message(Message(
+        id="1700100000000", sender=client.account, body="before edit",
+        timestamp=_dt.fromtimestamp(1700100000000 / 1000), is_read=True,
+    ))
+    sync_edit_envelope = [{
+        "envelope": {
+            "source": client.account,
+            "timestamp": 1700100001000,
+            "syncMessage": {
+                "sentMessage": {
+                    "editMessage": {
+                        "targetSentTimestamp": 1700100000000,
+                        "dataMessage": {"message": "after edit"},
+                    }
+                }
+            },
+        }
+    }]
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok(sync_edit_envelope)))
+    messages = await client.receive_messages(timeout=1)
+    assert messages == []
+    rows = _store_mod.search_messages("after edit")
+    assert len(rows) == 1
+    assert rows[0].body == "after edit"
