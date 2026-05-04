@@ -5,60 +5,50 @@
 [![Python](https://img.shields.io/pypi/pyversions/signal-mcp)](https://pypi.org/project/Signal-MCP/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Signal for Claude — and a better CLI.** signal-cli can send and receive. signal-mcp adds everything built on top of that: persistent history, full-text search, a usable conversation view, and an MCP interface so Claude can read, summarize, and act on your Signal messages. Everything runs 100% locally via [signal-cli](https://github.com/AsamK/signal-cli). No cloud, no third-party services.
+If you already have signal-cli, you already know its gaps: messages are delivered once and gone, output is raw phone numbers, the daemon needs manual babysitting, and there's no way to search what you sent last week. signal-mcp fixes all of that — and adds Claude on top.
 
-## What signal-mcp adds over raw signal-cli
+Everything runs locally via [signal-cli](https://github.com/AsamK/signal-cli). No cloud, no third-party services.
 
-**signal-cli has no message history.** It delivers a message once and forgets it. signal-mcp fixes this:
+## If you have signal-cli, here's what you're missing
 
-- **Persistent SQLite store** — every sent and received message saved locally, including messages sent from your phone or other linked devices
-- **FTS5 full-text search** — search across your entire history by keyword, sender, or date range
-- **Conversation view** — browse any thread with pagination, unread counts, and last-message previews; signal-cli has no concept of a conversation
-- **Signal Desktop import** — migrate your complete history from Signal Desktop in one command
-- **Background capture** — a macOS LaunchAgent or Linux systemd service stores every incoming message even when Claude isn't running
-- **Export** — dump your history to JSON or CSV for archiving or analysis
+**No history.** signal-cli delivers a message and forgets it. signal-mcp stores every sent and received message — including messages sent from your phone — in a local SQLite database. It stays there. You can search it, browse it, export it, and ask Claude about it.
 
-**signal-cli output is raw.** signal-mcp makes it usable:
+**No search.** signal-mcp adds an FTS5 full-text index. Find any message by keyword, filter by sender, page through results.
 
-- **Contact name resolution** — everywhere signal-cli returns `+491712221613`, signal-mcp shows `Alaa Moafy`
-- **Daemon lifecycle** — auto-start on first use, watchdog restart on crash, one-command service install; no manual process management
+**No conversation view.** signal-cli has no concept of a thread. signal-mcp gives you paginated history per contact or group, unread counts, and last-message previews across all your chats.
 
-**Claude integration.** signal-cli is a CLI tool. signal-mcp exposes the same surface as an MCP server so Claude can read your conversations, understand context, and take action — things no CLI pipe can do.
+**Raw phone numbers everywhere.** signal-mcp resolves `+491712221613` → `Alaa Moafy` in all output.
 
-## CLI + MCP: they complement each other
+**Manual daemon management.** signal-mcp auto-starts the daemon on first use, restarts it if it crashes, and can install a background service (macOS LaunchAgent or Linux systemd) that captures every incoming message — even when you're not at your computer.
 
-The CLI and MCP server share the same store and daemon. Use whichever fits the task:
+**No Claude.** signal-mcp is an MCP server. Claude can read your conversations, understand context, draft replies, and take action. A CLI pipe can't do that.
 
-| Task | Use |
+## CLI and MCP: use whichever fits the task
+
+The CLI and MCP server share the same store and daemon. You don't have to choose one:
+
+| Task | How |
 |---|---|
-| Quick send from a terminal or cron job | `signal-mcp send +49... "done"` |
-| Set up background message capture | `signal-mcp install-service` (CLI, once) |
-| Import history from Signal Desktop | `signal-mcp import-desktop` (CLI, once) |
-| "Summarize what I missed this week" | Claude via MCP |
-| "Find every message mentioning the invoice" | Claude via MCP |
-| "Draft a reply to Marco's last message" | Claude via MCP |
-| "Who messaged me most today?" | Claude via MCP |
+| Quick send from terminal or a cron job | `signal-mcp send +49... "done"` |
+| Set up background message capture (once) | `signal-mcp install-service` |
+| Import full history from Signal Desktop (once) | `signal-mcp import-desktop` |
 | Export a conversation to CSV | `signal-mcp export --recipient +49... --format csv` |
-
-## What Claude can do
-
-> *"What did I miss on Signal while I was offline?"*
-> *"Search my messages for anything about the project deadline"*
-> *"Summarize my conversation with Marco this week and draft a reply"*
-> *"Who in my contacts hasn't messaged me in over a month?"*
-> *"Send the team group a message: standup in 5 minutes"*
-> *"Save a note to myself: pick up dry cleaning Thursday"*
-> *"React with 👍 to Anna's last message"*
+| "What did I miss while I was offline?" | Claude via MCP |
+| "Find every message mentioning the invoice" | Claude via MCP |
+| "Summarize my week with Marco and draft a reply" | Claude via MCP |
+| "Who in my contacts hasn't messaged me in a month?" | Claude via MCP |
+| "Send the team: standup in 5 minutes" | Claude via MCP |
 
 ## Features
 
-- **Persistent SQLite store** — all messages saved locally, survives restarts
+- **Persistent SQLite store** — every message saved locally, survives restarts
 - **FTS5 full-text search** — instant search across entire history
-- **Signal Desktop import** — one command pulls complete history (macOS/Linux/Windows)
-- **Background service** — captures messages automatically even when Claude isn't running
+- **Signal Desktop import** — migrate your complete history in one command (macOS/Linux/Windows)
+- **Background service** — captures messages automatically, even when Claude isn't running
 - **Export** — JSON or CSV with recipient and date filters
+- **Contact name resolution** — phone numbers resolved to names everywhere
 - **68 MCP tools** — complete signal-cli coverage (see [coverage matrix](#signal-cli-coverage))
-- **Full CLI** — use Signal from your terminal without Claude
+- **Full CLI** — all the above without Claude, from your terminal
 - **100% local** — your data never leaves your machine
 
 ## Setup
