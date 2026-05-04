@@ -44,7 +44,7 @@ The CLI and MCP server share the same store and daemon. You don't have to choose
 - **Background service** — captures messages automatically, even when Claude isn't running
 - **Export** — JSON or CSV with recipient and date filters
 - **Contact name resolution** — phone numbers resolved to names everywhere
-- **68 MCP tools** — complete signal-cli coverage (see [coverage matrix](#signal-cli-coverage))
+- **71 MCP tools** — complete signal-cli coverage (see [coverage matrix](#signal-cli-coverage))
 - **Full CLI** — all the above without Claude, from your terminal
 - **100% local** — your data never leaves your machine
 
@@ -397,7 +397,7 @@ Run both for complete coverage.
 
 **How it works:**
 
-`get_unread` and `list_conversations` are the primary "check for new messages" tools. Both automatically poll signal-cli for new messages before reading the store — so they're always fresh regardless of when the last check was. If the background service is installed, the poll is skipped (the service already keeps the store up to date) and a warning is omitted. If no service is installed, both tools include a `_warning` field telling Claude to suggest `signal-mcp install-service` to the user.
+`get_unread` is the primary "check for new messages" tool. If the background service is installed, it reads straight from the store (the service keeps it up to date). Otherwise it polls signal-cli first (debounced to once every 30 seconds) and includes a `_warning` suggesting `signal-mcp install-service`. `list_conversations` is a pure store read — fast, no polling.
 
 The daemon starts automatically on first use. Attachments are saved to `~/Downloads/signal-attachments/`.
 
@@ -405,7 +405,7 @@ The daemon starts automatically on first use. Attachments are saved to `~/Downlo
 
 signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli.1.adoc). Here's what is and isn't covered:
 
-### Covered (68 tools)
+### Covered (71 tools)
 
 | signal-cli command | signal-mcp tool |
 |---|---|
@@ -446,8 +446,10 @@ signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signa
 | `listAccounts` | `list_accounts` |
 | `updateAccount` | `update_account` |
 | `setPin` / `removePin` | `set_pin` / `remove_pin` |
+| `startChangeNumber` / `finishChangeNumber` | `start_change_number` / `finish_change_number` |
+| `submitRateLimitChallenge` | `submit_rate_limit_challenge` |
 
-Plus tools with no direct signal-cli equivalent: `get_conversation`, `search_messages`, `list_conversations`, `store_stats`, `import_desktop`, `export_messages`, `mark_as_unread`, `clear_local_store`, `delete_local_messages`.
+Plus tools with no direct signal-cli equivalent: `get_conversation`, `search_messages`, `list_conversations`, `store_stats`, `import_desktop`, `export_messages`, `mark_as_unread`, `clear_local_store`, `delete_local_messages`, `prune_store`.
 
 ### Not covered
 
@@ -457,10 +459,8 @@ These commands are deliberately excluded — they are not feasible to implement 
 |---|---|
 | `acceptCall` / `hangupCall` / `rejectCall` / `startCall` / `listCalls` | Voice/video calls require WebRTC and an active media stack — not feasible via MCP |
 | `register` / `verify` / `link` / `unregister` | One-time account setup; must be done before installing signal-mcp |
-| `startChangeNumber` / `finishChangeNumber` | Multi-step phone number migration involving SMS verification |
 | `deleteLocalAccountData` | Irreversibly destroys all local Signal data; too destructive to expose |
 | `sendPaymentNotification` | MobileCoin payments (requires a funded wallet; out of scope) |
-| `submitRateLimitChallenge` | CAPTCHA bypass for rate limits — not automatable |
 
 ## Development
 

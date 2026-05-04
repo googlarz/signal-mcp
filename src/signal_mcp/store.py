@@ -109,6 +109,10 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_recipient_ts ON messages(recipient, timestamp)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_unread "
+            "ON messages(is_read, sender, timestamp) WHERE is_read = 0"
+        )
     _initialized = True
 
 
