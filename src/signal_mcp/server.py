@@ -1007,6 +1007,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "receive_messages":
             await client._ensure_contact_cache()
+            await client._ensure_group_cache()
             try:
                 timeout = int(arguments.get("timeout", 5))
             except (TypeError, ValueError):
@@ -1043,6 +1044,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             limit = arguments.get("limit", 50)
             offset = arguments.get("offset", 0)
             await client._ensure_contact_cache()
+            await client._ensure_group_cache()
             messages = await client.get_conversation(
                 arguments["recipient"], limit=limit, offset=offset, since=since,
             )
@@ -1065,6 +1067,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "search_messages":
             await client._ensure_contact_cache()
+            await client._ensure_group_cache()
             messages = await client.search_messages(
                 arguments["query"],
                 limit=int(arguments.get("limit", 50)),
@@ -1520,8 +1523,9 @@ async def serve() -> None:
     # Pre-warm: start daemon in background so first tool call doesn't cold-start
     await client.prewarm()
     # Pre-load contact + group names in background
-    cache_task = asyncio.create_task(client._ensure_contact_cache())
-    client._background_tasks.append(cache_task)
+    for _cache_coro in (client._ensure_contact_cache(), client._ensure_group_cache()):
+        _t = asyncio.create_task(_cache_coro)
+        client._background_tasks.append(_t)
     # Watchdog: auto-restart daemon if it crashes
     watchdog_task = asyncio.create_task(client.watchdog())
     client._background_tasks.append(watchdog_task)
