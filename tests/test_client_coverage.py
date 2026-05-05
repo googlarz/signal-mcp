@@ -670,6 +670,7 @@ async def test_ensure_daemon_starts_when_dead(client, monkeypatch, tmp_path):
     monkeypatch.setattr(_conf, "DAEMON_PID_FILE", tmp_path / "daemon.pid")
 
     # Daemon not alive initially, starts after first poll
+    monkeypatch.setattr("signal_mcp.client._daemon_last_ok_at", 0.0)
     alive_calls = [False, False, True]
     alive_iter = iter(alive_calls)
     monkeypatch.setattr(client, "_daemon_alive", AsyncMock(side_effect=alive_iter))
@@ -697,6 +698,7 @@ async def test_ensure_daemon_kills_stale_pid(client, monkeypatch, tmp_path):
         killed["sig"] = sig
 
     # Daemon not alive; stale pid 55555 exists; daemon alive after first poll
+    monkeypatch.setattr("signal_mcp.client._daemon_last_ok_at", 0.0)
     alive_iter = iter([False, False, True])
     monkeypatch.setattr(client, "_daemon_alive", AsyncMock(side_effect=alive_iter))
     monkeypatch.setattr("signal_mcp.client.asyncio.sleep", AsyncMock())
@@ -719,6 +721,7 @@ async def test_ensure_daemon_stale_pid_already_gone(client, monkeypatch):
     def fake_kill(pid, sig):
         raise ProcessLookupError
 
+    monkeypatch.setattr("signal_mcp.client._daemon_last_ok_at", 0.0)
     alive_iter = iter([False, False, True])
     monkeypatch.setattr(client, "_daemon_alive", AsyncMock(side_effect=alive_iter))
     monkeypatch.setattr("signal_mcp.client.asyncio.sleep", AsyncMock())
@@ -736,6 +739,7 @@ async def test_ensure_daemon_stale_pid_already_gone(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_ensure_daemon_timeout_raises(client, monkeypatch):
     """ensure_daemon raises SignalError when daemon never starts within 20 polls."""
+    monkeypatch.setattr("signal_mcp.client._daemon_last_ok_at", 0.0)
     monkeypatch.setattr(client, "_daemon_alive", AsyncMock(return_value=False))
     monkeypatch.setattr("signal_mcp.client.asyncio.sleep", AsyncMock())
     monkeypatch.setattr("signal_mcp.client.read_daemon_pid", lambda: None)
@@ -845,6 +849,7 @@ async def test_ensure_daemon_second_check_inside_lock(client, monkeypatch):
     """
     # First call: outer fast-path check → False (need to acquire lock)
     # Second call: inner re-check after acquiring lock → True (already started)
+    monkeypatch.setattr("signal_mcp.client._daemon_last_ok_at", 0.0)
     alive_results = iter([False, True])
     monkeypatch.setattr(client, "_daemon_alive", AsyncMock(side_effect=alive_results))
 

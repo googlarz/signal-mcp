@@ -1215,8 +1215,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok(client.get_attachment(arguments["filename"]))
 
         elif name == "receive_messages":
-            await client._ensure_contact_cache()
-            await client._ensure_group_cache()
+            await client._ensure_caches()
             try:
                 timeout = int(arguments.get("timeout", 5))
             except (TypeError, ValueError):
@@ -1252,13 +1251,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     return _err(f"Invalid since date: {arguments['since']}")
             limit = arguments.get("limit", 50)
             offset = arguments.get("offset", 0)
-            await client._ensure_contact_cache()
-            await client._ensure_group_cache()
-            messages = await client.get_conversation(
-                arguments["recipient"], limit=limit, offset=offset, since=since,
-            )
-            total = await asyncio.to_thread(
-                _store.count_conversation, arguments["recipient"], since=since
+            await client._ensure_caches()
+            messages, total = await asyncio.gather(
+                client.get_conversation(
+                    arguments["recipient"], limit=limit, offset=offset, since=since,
+                ),
+                asyncio.to_thread(
+                    _store.count_conversation, arguments["recipient"], since=since
+                ),
             )
             # client.get_conversation already marks incoming messages as read
             return _ok({
@@ -1270,8 +1270,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             })
 
         elif name == "search_messages":
-            await client._ensure_contact_cache()
-            await client._ensure_group_cache()
+            await client._ensure_caches()
             messages = await client.search_messages(
                 arguments["query"],
                 limit=int(arguments.get("limit", 50)),
@@ -1373,8 +1372,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return _ok({"number": client.get_own_number()})
 
         elif name == "get_unread":
-            await client._ensure_contact_cache()
-            await client._ensure_group_cache()
+            await client._ensure_caches()
             warning = await _freshen_store(client)
             limit = int(arguments.get("limit", 50))
             # Fetch one extra to detect whether more exist without a COUNT query
@@ -1413,8 +1411,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return _err(str(e))
 
         elif name == "list_conversations":
-            await client._ensure_contact_cache()
-            await client._ensure_group_cache()
+            await client._ensure_caches()
             # client.list_conversations() already resolves names via resolve_name/resolve_group_name
             conversations = await client.list_conversations()
             return _ok(conversations)
@@ -1731,10 +1728,9 @@ async def serve() -> None:  # pragma: no cover
         client = get_client()
         # Pre-warm: start daemon in background so first tool call doesn't cold-start
         await client.prewarm()
-        # Pre-load contact + group names in background
-        for _cache_coro in (client._ensure_contact_cache(), client._ensure_group_cache()):
-            _t = asyncio.create_task(_cache_coro)
-            client._background_tasks.append(_t)
+        # Pre-load contact + group names concurrently in background
+        _t = asyncio.create_task(client._ensure_caches())
+        client._background_tasks.append(_t)
         # Watchdog is already started by prewarm() via _start_watchdog() (idempotent)
     except RuntimeError as exc:
         import sys

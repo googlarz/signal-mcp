@@ -296,54 +296,42 @@ def mark_as_unread(message_ids: list[str]) -> None:
 
 
 def list_conversations(own_number: str = "") -> list[dict]:
-    """Return all distinct conversations ordered by most recent message."""
+    """Return all distinct conversations ordered by most recent message.
+
+    Uses a single CTE + window function so the messages table is scanned once,
+    replacing the previous two-query approach.
+    """
     init_db()
     with _db() as conn:
         rows = conn.execute(
-            """SELECT
-                COALESCE(group_id,
-                    CASE WHEN sender = ? THEN recipient ELSE sender END
-                ) AS id,
-                CASE WHEN group_id IS NOT NULL THEN 'group' ELSE 'direct' END AS type,
-                MAX(timestamp) AS last_message_at,
-                COUNT(*) AS message_count,
-                SUM(CASE WHEN is_read = 0 AND sender != ? THEN 1 ELSE 0 END) AS unread_count
-               FROM messages
-               WHERE COALESCE(group_id,
-                    CASE WHEN sender = ? THEN recipient ELSE sender END
-               ) IS NOT NULL
-               GROUP BY COALESCE(group_id,
-                    CASE WHEN sender = ? THEN recipient ELSE sender END
+            """WITH numbered AS (
+                   SELECT *,
+                       COALESCE(group_id,
+                           CASE WHEN sender = ? THEN recipient ELSE sender END
+                       ) AS conv_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY COALESCE(group_id,
+                               CASE WHEN sender = ? THEN recipient ELSE sender END
+                           )
+                           ORDER BY timestamp DESC
+                       ) AS rn
+                   FROM messages
+                   WHERE COALESCE(group_id,
+                       CASE WHEN sender = ? THEN recipient ELSE sender END
+                   ) IS NOT NULL
                )
+               SELECT
+                   conv_id AS id,
+                   CASE WHEN MAX(group_id) IS NOT NULL THEN 'group' ELSE 'direct' END AS type,
+                   MAX(timestamp) AS last_message_at,
+                   COUNT(*) AS message_count,
+                   SUM(CASE WHEN is_read = 0 AND sender != ? THEN 1 ELSE 0 END) AS unread_count,
+                   MAX(CASE WHEN rn = 1 THEN body END) AS last_message
+               FROM numbered
+               GROUP BY conv_id
                ORDER BY last_message_at DESC""",
             (own_number, own_number, own_number, own_number),
         ).fetchall()
-        # Fetch last message body per conversation using a window function —
-        # single table scan, no IN list, no variable-count risk.
-        last_body: dict[str, str] = {}
-        if rows:
-            snippet_rows = conn.execute(
-                """SELECT conv_id, body FROM (
-                       SELECT
-                           COALESCE(group_id,
-                               CASE WHEN sender = ? THEN recipient ELSE sender END
-                           ) AS conv_id,
-                           body,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY COALESCE(group_id,
-                                   CASE WHEN sender = ? THEN recipient ELSE sender END
-                               )
-                               ORDER BY timestamp DESC
-                           ) AS rn
-                       FROM messages
-                       WHERE COALESCE(group_id,
-                           CASE WHEN sender = ? THEN recipient ELSE sender END
-                       ) IS NOT NULL
-                   ) WHERE rn = 1""",
-                (own_number, own_number, own_number),
-            ).fetchall()
-            for s in snippet_rows:
-                last_body[s["conv_id"]] = s["body"]
         return [
             {
                 "id": r["id"],
@@ -351,7 +339,7 @@ def list_conversations(own_number: str = "") -> list[dict]:
                 "last_message_at": datetime.fromtimestamp(r["last_message_at"] / 1000).isoformat(),
                 "message_count": r["message_count"],
                 "unread_count": r["unread_count"] or 0,
-                "last_message": last_body.get(r["id"], ""),
+                "last_message": r["last_message"] or "",
             }
             for r in rows
         ]

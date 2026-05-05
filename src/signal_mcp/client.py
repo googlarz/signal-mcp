@@ -99,11 +99,21 @@ _group_cache_loaded: bool = False
 _group_cache_at: float = 0.0
 
 
+_daemon_last_ok_at: float = 0.0   # monotonic timestamp of last confirmed-alive check
+_DAEMON_OK_TTL: float = 5.0       # skip HTTP ping if daemon was healthy within this window
+
+
 class SignalClient:
     def __init__(self, account: str | None = None, daemon_url: str = DAEMON_URL):
         self._account = account
         self._daemon_url = daemon_url
-        self._http = httpx.AsyncClient()  # timeouts are set per-request in _rpc()
+        # Pool size matches the RPC semaphore (4 concurrent RPCs).
+        # connect=2.0s is tight since the daemon is localhost; read=None lets
+        # per-request timeouts (passed in each _rpc call) govern read duration.
+        self._http = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
+            timeout=httpx.Timeout(connect=2.0, read=None, write=5.0, pool=2.0),
+        )
         self._rpc_sem = asyncio.Semaphore(4)   # allow up to 4 concurrent RPCs
         self._daemon_lock = asyncio.Lock()      # single-flight guard for ensure_daemon
         self._background_tasks: list[asyncio.Task] = []
@@ -133,7 +143,9 @@ class SignalClient:
 
     async def ensure_daemon(self) -> None:
         """Start signal-cli daemon if not already running (single-flight)."""
-        # Fast path without lock
+        # TTL fast path: skip HTTP ping if daemon was healthy recently
+        if time.monotonic() - _daemon_last_ok_at < _DAEMON_OK_TTL:
+            return
         if await self._daemon_alive():
             return
 
@@ -199,13 +211,17 @@ class SignalClient:
         return False
 
     async def _daemon_alive(self) -> bool:
+        global _daemon_last_ok_at
         try:
             r = await self._http.post(
                 self._daemon_url,
                 json={"jsonrpc": "2.0", "method": "version", "id": 0},
                 timeout=3.0,
             )
-            return r.status_code == 200
+            if r.status_code == 200:
+                _daemon_last_ok_at = time.monotonic()
+                return True
+            return False
         except Exception:
             return False
 
@@ -649,6 +665,13 @@ class SignalClient:
             _group_cache_at = time.monotonic()
         except Exception:
             pass
+
+    async def _ensure_caches(self) -> None:
+        """Load contact and group name caches concurrently (parallel RPC calls)."""
+        await asyncio.gather(
+            self._ensure_contact_cache(),
+            self._ensure_group_cache(),
+        )
 
     def resolve_name(self, number: str) -> str:
         """Return display name for a number, or the number itself if unknown."""
