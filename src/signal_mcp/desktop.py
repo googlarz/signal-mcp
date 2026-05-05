@@ -186,6 +186,16 @@ def _decrypt_key(encrypted_hex: str, password: bytes) -> str:
     unpadder = padding.PKCS7(128).unpadder()
     db_key_bytes = unpadder.update(plaintext) + unpadder.finalize()
 
+    # Signal Desktop stores the SQLCipher key as a hex-encoded ASCII string
+    # (e.g. b'3a0aaac0...'), not raw binary bytes.  Decode it directly instead
+    # of calling .hex() which would double-encode and produce the wrong key.
+    try:
+        candidate = db_key_bytes.decode("ascii")
+        if len(candidate) in (64, 128) and all(c in "0123456789abcdefABCDEF" for c in candidate):
+            return candidate.lower()
+    except (UnicodeDecodeError, ValueError):
+        pass
+    # Fallback for platforms that do store raw bytes: hex-encode them
     return db_key_bytes.hex()
 
 
@@ -201,8 +211,8 @@ def _decrypt_db_to_temp(db_key_hex: str, db_path: Path | None = None) -> Path:
         f"PRAGMA key = \"x'{db_key_hex}'\";\n"
         f"PRAGMA cipher_page_size = 4096;\n"
         f"PRAGMA kdf_iter = 1;\n"
-        f"PRAGMA cipher_hmac_algorithm = HMAC_SHA1;\n"
-        f"PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA1;\n"
+        f"PRAGMA cipher_hmac_algorithm = HMAC_SHA512;\n"
+        f"PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;\n"
         f"ATTACH DATABASE '{tmp}' AS plaintext KEY '';\n"
         f"SELECT sqlcipher_export('plaintext');\n"
         f"DETACH DATABASE plaintext;\n"
@@ -243,8 +253,18 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms:
     messages = []
 
     try:
+        # Signal Desktop renamed sourceUuid → sourceServiceId in newer versions.
+        # Detect whichever column is present and alias it to a stable name.
+        msg_cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
+        if "sourceServiceId" in msg_cols:
+            source_col = "m.sourceServiceId AS sourceUuid"
+        elif "sourceUuid" in msg_cols:
+            source_col = "m.sourceUuid AS sourceUuid"
+        else:
+            source_col = "NULL AS sourceUuid"
+
         rows = conn.execute(
-            """SELECT
+            f"""SELECT
                 m.id,
                 m.conversationId,
                 m.type,
@@ -252,7 +272,7 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms:
                 m.sent_at,
                 m.received_at,
                 m.source,
-                m.sourceUuid,
+                {source_col},
                 m.hasAttachments,
                 c.e164    AS conv_e164,
                 c.groupId AS conv_group_id
