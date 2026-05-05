@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/signal-mcp)](https://pypi.org/project/Signal-MCP/)
 [![Python](https://img.shields.io/pypi/pyversions/signal-mcp)](https://pypi.org/project/Signal-MCP/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![signal-mcp MCP server](https://glama.ai/mcp/servers/googlarz/signal-mcp/badges/card.svg)](https://glama.ai/mcp/servers/googlarz/signal-mcp)
+[![Glama](https://img.shields.io/badge/Glama-A-brightgreen)](https://glama.ai/mcp/servers/googlarz/signal-mcp)
 
 signal-mcp is a layer on top of [signal-cli](https://github.com/AsamK/signal-cli) that adds everything it's missing: persistent message history, full-text search, a usable conversation view, contact name resolution, and an MCP server so Claude can read, search, and act on your Signal messages. 100% local — no cloud, no third-party services.
 
