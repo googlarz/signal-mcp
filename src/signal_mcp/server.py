@@ -200,7 +200,15 @@ TOOLS = [
     ),
     Tool(
         name="search_messages",
-        description="Search for messages containing a keyword",
+        description=(
+            "Full-text search across all locally stored messages by keyword or phrase. "
+            "Searches message bodies using SQLite FTS — results are ranked by relevance. "
+            "Only messages in the local store are searchable; messages never received on this device are excluded. "
+            "Use sender to narrow results to a specific conversation. "
+            "Use limit and offset to paginate through large result sets. "
+            "Use when looking for a specific message or topic across all Signal conversations. "
+            "Do NOT use to browse a conversation chronologically — use get_conversation for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -370,7 +378,18 @@ TOOLS = [
     ),
     Tool(
         name="update_profile",
-        description="Update your own Signal profile (name, about text, avatar)",
+        description=(
+            "Update your own Signal profile visible to all contacts. "
+            "name sets your display name shown to contacts who have not saved your number. "
+            "about sets the bio text shown on your profile page. "
+            "avatar_path sets a new profile photo from a local image file (JPEG or PNG). "
+            "Set remove_avatar=true to clear your current photo without setting a new one. "
+            "All parameters are optional — only include what you want to change. "
+            "Changes are propagated to the Signal network immediately. "
+            "Use get_profile to read a contact's current profile. "
+            "Do NOT use to rename a linked device — use update_device for that. "
+            "Do NOT use to change messaging settings — use update_configuration for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -417,12 +436,27 @@ TOOLS = [
     ),
     Tool(
         name="list_devices",
-        description="List all devices linked to your Signal account",
+        description=(
+            "List all devices currently linked to your Signal account, including the primary device and any linked secondaries. "
+            "Returns each device's ID, name, and last-seen timestamp. "
+            "Device ID 1 is always the primary device (your registered phone). "
+            "Use the returned device_id values with update_device (rename), remove_device (unlink). "
+            "Use when auditing which devices have access to your Signal account, "
+            "or to find the ID of a device you want to rename or remove."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="add_device",
-        description="Link a new device to your Signal account using a device link URI",
+        description=(
+            "Link a new secondary device to your Signal account using a device-link URI. "
+            "The URI is generated on the new device by running 'signal-cli link' or by scanning the QR code "
+            "in Signal Desktop's Settings → Linked Devices → Link New Device. "
+            "After linking, the new device receives future messages but not historical ones. "
+            "Use list_devices to confirm the device was linked successfully. "
+            "Use remove_device to unlink a device you no longer use. "
+            "Do NOT share the device-link URI — it grants full Signal account access to whoever uses it."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -433,7 +467,15 @@ TOOLS = [
     ),
     Tool(
         name="remove_device",
-        description="Unlink a device from your Signal account",
+        description=(
+            "Permanently unlink a secondary device from your Signal account. "
+            "The device loses access to send and receive messages immediately. "
+            "device_id must be a secondary device (ID ≥ 2) — you cannot unlink your primary device. "
+            "The removed device is not notified; it simply stops receiving messages. "
+            "This action is irreversible — the device must re-link via add_device to regain access. "
+            "Use list_devices to find the device_id you want to remove. "
+            "Use update_device to rename a device without removing it."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -505,7 +547,19 @@ TOOLS = [
     ),
     Tool(
         name="delete_message",
-        description="Remote-delete (unsend) a message you sent to a contact",
+        description=(
+            "Remote-delete (unsend) a message you previously sent to a Signal contact. "
+            "Delivers a delete request to the recipient's device; the message disappears from their "
+            "conversation view on Signal 5.0+ clients. "
+            "You can only delete messages you sent — you cannot delete messages received from others. "
+            "target_timestamp is the sent_at timestamp of the message (from get_conversation). "
+            "Deletion may fail silently if the recipient is on an older Signal client. "
+            "Remote deletion does not remove the message from the local signal-mcp store — "
+            "use delete_local_messages to remove it locally. "
+            "Use when you want to retract a sent message from the recipient's device. "
+            "Do NOT use for group messages — use delete_group_message instead. "
+            "Do NOT use to delete a message you received — only senders can remotely delete."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -517,7 +571,17 @@ TOOLS = [
     ),
     Tool(
         name="delete_group_message",
-        description="Remote-delete (unsend) a message you sent to a group",
+        description=(
+            "Remote-delete (unsend) a message you previously sent to a Signal group. "
+            "Delivers a delete request to all group members' devices; the message disappears from "
+            "their conversation view on Signal 5.0+ clients. "
+            "You can only delete messages you sent — for admin deletion of any member's message use admin_delete_message. "
+            "target_timestamp is the sent_at timestamp of the message (from get_conversation). "
+            "Deletion may fail silently on older Signal clients. "
+            "Remote deletion does not remove the message from the local signal-mcp store. "
+            "Use when you want to retract a message you sent in a group. "
+            "Do NOT use for direct messages — use delete_message instead."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -553,7 +617,20 @@ TOOLS = [
     ),
     Tool(
         name="update_group",
-        description="Update a group's name, description, members, admins, or expiration timer",
+        description=(
+            "Modify a Signal group's settings, membership, or permissions. "
+            "All parameters except group_id are optional — include only what you want to change. "
+            "add_members sends invitations; remove_members removes members immediately. "
+            "add_admins promotes members to admin; remove_admins demotes them. "
+            "expiration_seconds sets the disappearing-messages timer (0 to disable). "
+            "link_mode controls the invite link: 'enabled' (anyone with link can join), "
+            "'enabled-with-approval' (admin must approve), 'disabled' (no link), "
+            "or 'reset' (generate a new link and invalidate the old one). "
+            "Changes are applied instantly and all members receive an update notification. "
+            "You must be a group admin to change membership, admin list, or invite link. "
+            "Use list_groups to get the group_id and confirm your admin status. "
+            "Do NOT use to send a message — use send_group_message for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -683,7 +760,14 @@ TOOLS = [
     ),
     Tool(
         name="mark_as_unread",
-        description="Mark messages as unread in the local store",
+        description=(
+            "Mark one or more messages as unread in the local signal-mcp store. "
+            "This updates only the local database — it does not affect read receipts already sent "
+            "to the sender, nor does it change how messages appear on other devices. "
+            "message_ids are the internal signal-mcp IDs returned by get_conversation or search_messages. "
+            "Messages marked unread are returned by get_unread on the next call. "
+            "Use when you want to flag a message for follow-up later."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -694,7 +778,14 @@ TOOLS = [
     ),
     Tool(
         name="get_avatar",
-        description="Get the avatar image for a contact or group as base64-encoded data",
+        description=(
+            "Retrieve the profile photo for a contact or group as base64-encoded image data. "
+            "Pass a phone number (E.164) for contacts or a group ID (from list_groups) for groups. "
+            "Returns raw image bytes encoded as base64 — decode to get a JPEG or PNG. "
+            "Returns an error if no avatar is set for the identifier. "
+            "Use get_profile to also read name and about text alongside the avatar. "
+            "Use update_profile with avatar_path to set your own profile photo."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -788,7 +879,16 @@ TOOLS = [
     ),
     Tool(
         name="set_expiration_timer",
-        description="Set or disable the disappearing message timer for a conversation",
+        description=(
+            "Set or disable the disappearing-messages timer for a direct or group conversation. "
+            "Once set, all new messages auto-delete after expiration_seconds on both sides. "
+            "Common values: 3600 (1h), 86400 (1d), 604800 (1w), 2592000 (30d). "
+            "Set expiration_seconds=0 to disable disappearing messages entirely. "
+            "Provide recipient for a direct conversation or group_id for a group — exactly one is required. "
+            "The change is delivered to all participants and takes effect on new messages immediately; "
+            "existing messages already sent are not affected. "
+            "Use when you want automatic privacy for a sensitive conversation."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -811,7 +911,18 @@ TOOLS = [
     ),
     Tool(
         name="trust_identity",
-        description="Trust a contact's identity key after verifying their safety number",
+        description=(
+            "Trust a contact's Signal identity key after verifying their safety number out-of-band. "
+            "Signal uses identity keys (safety numbers) to verify end-to-end encryption. "
+            "When a contact's safety number changes (e.g. they reinstalled Signal), sending fails "
+            "until you explicitly trust the new key — this tool resolves that block. "
+            "Provide safety_number to trust only that specific verified key; leave it blank to trust "
+            "all known keys for the number (less secure but unblocks delivery immediately). "
+            "Use list_identities to inspect the current trust level and key fingerprint before calling. "
+            "Use when Signal blocks delivery with 'untrusted identity' or 'safety number changed' errors. "
+            "Do NOT trust without first verifying the safety number via a trusted channel (in-person, phone call). "
+            "Trusting an unverified key bypasses Signal's TOFU identity verification."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -866,7 +977,18 @@ TOOLS += [
     ),
     Tool(
         name="update_configuration",
-        description="Toggle Signal account settings: read receipts, typing indicators, link previews",
+        description=(
+            "Update Signal account-wide messaging settings. "
+            "read_receipts controls whether Signal tells senders when you have read their messages. "
+            "typing_indicators controls whether contacts see the '...' indicator when you are composing. "
+            "link_previews controls whether URLs in outgoing messages generate inline previews. "
+            "unidentified_delivery_indicators controls whether sealed-sender delivery icons are shown. "
+            "All parameters are optional — omit any setting you do not want to change. "
+            "Changes take effect immediately and persist across sessions. "
+            "Use get_configuration to read the current values before modifying. "
+            "Use update_account for account-level privacy settings (discoverability, username). "
+            "Do NOT use to change your profile name or photo — use update_profile for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -981,7 +1103,16 @@ TOOLS += [
     ),
     Tool(
         name="upload_sticker_pack",
-        description="Upload and publish a sticker pack from a local manifest.json or zip file. Returns the signal.art URL.",
+        description=(
+            "Package and publish a sticker pack to Signal's CDN from local image files. "
+            "Accepts a local manifest.json describing the pack, or a zip archive containing both the manifest and images. "
+            "Signal's CDN stores the pack and returns a signal.art install URL you can share with others. "
+            "Recipients call add_sticker_pack with the URL to install the pack and send its stickers. "
+            "After publishing, the pack is available on Signal's network indefinitely. "
+            "Use when you want to create and distribute a custom sticker pack. "
+            "Use add_sticker_pack to install an existing pack for sending. "
+            "Do NOT use to install a pack — use add_sticker_pack for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
