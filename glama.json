@@ -1,12 +1,4 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "name": "Signal MCP",
-  "description": "The most complete Signal MCP server and CLI — send, receive, search, groups, attachments, reactions, history, and more via signal-cli. 100% local.",
-  "license": "MIT",
-  "homepage": "https://github.com/googlarz/signal-mcp",
-  "maintainers": [
-    {
-      "github": "googlarz"
-    }
-  ]
+  "maintainers": ["googlarz"]
 }
