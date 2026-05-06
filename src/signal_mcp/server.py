@@ -78,31 +78,34 @@ TOOLS = [
     Tool(
         name="send_group_message",
         description=(
-            "Send a text message to a Signal group. All group members receive the message. "
-            "Returns the sent timestamp for use with react_to_message or edit_message. "
-            "To @mention specific members, provide a mentions list with character offsets into the message text. "
-            "To reply to a message, provide quote_author and quote_timestamp. "
-            "Use list_groups to find the group_id."
+            "Send a text message to a Signal group. The message is delivered end-to-end encrypted to all group members. "
+            "Returns the sent timestamp, which can be used as target_timestamp for react_to_message or edit_message. "
+            "To @mention a member, include their name in the message text and pass a mentions list where each entry has "
+            "start (character index of the mention in the text), length (character count), and author (E.164 phone number). "
+            "To reply/quote a message, provide quote_author (sender's phone number) and quote_timestamp (from get_conversation). "
+            "Use list_groups to get group_id values. "
+            "Use send_group_attachment to send files or images to a group. "
+            "Do NOT use for direct messages to a contact — use send_message instead."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "group_id": {"type": "string", "description": "Group ID (get from list_groups)"},
+                "group_id": {"type": "string", "description": "Group ID (from list_groups)"},
                 "message": {"type": "string", "description": "Message text to send"},
                 "mentions": {
                     "type": "array",
-                    "description": "List of @mentions: each item is {start, length, author} where start/length are character offsets into the message and author is a phone number",
+                    "description": "List of @mentions. Each item: {start: character offset of the mention in the message, length: character count of the mention, author: E.164 phone number of the mentioned member}. Example: message='Hello @Alice', mentions=[{start:6,length:6,author:'+1234567890'}]",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "start": {"type": "integer"},
-                            "length": {"type": "integer"},
-                            "author": {"type": "string"},
+                            "start": {"type": "integer", "description": "Character offset of the mention in the message text"},
+                            "length": {"type": "integer", "description": "Length of the mention text in characters"},
+                            "author": {"type": "string", "description": "E.164 phone number of the mentioned group member"},
                         },
                     },
                 },
-                "quote_author": {"type": "string", "description": "Phone number of the author of the message being quoted/replied to"},
-                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to (from get_conversation)"},
+                "quote_author": {"type": "string", "description": "Phone number (E.164) of the author of the message being quoted"},
+                "quote_timestamp": {"type": "integer", "description": "Timestamp of the quoted message (from get_conversation)"},
             },
             "required": ["group_id", "message"],
         },
@@ -531,7 +534,14 @@ TOOLS = [
     ),
     Tool(
         name="list_conversations",
-        description="List all conversations (direct and group) ordered by most recent message",
+        description=(
+            "List all conversations (both direct and group) ordered by most recent message. "
+            "Returns contact/group name, phone number or group_id, last message preview, timestamp, and unread count. "
+            "Use this to get an inbox overview before reading specific conversations with get_conversation. "
+            "Contact and group names are resolved from local signal-cli contacts and groups. "
+            "Use get_unread to fetch only unread messages across all conversations. "
+            "Do NOT use this to read message history — use get_conversation for that."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -560,7 +570,14 @@ TOOLS = [
     ),
     Tool(
         name="send_sync_request",
-        description="Request a sync of messages, contacts, and groups from your primary Signal device. Useful if history is missing on this linked device.",
+        description=(
+            "Request a full sync of messages, contacts, and groups from your primary Signal device to this linked device. "
+            "Signal's linked-device architecture stores history on the primary device; a sync pulls that data here. "
+            "Use when list_conversations shows no history, list_contacts returns fewer contacts than expected, "
+            "or list_groups is missing groups that exist on your phone. "
+            "The sync is asynchronous — data arrives in the background over the next few seconds. "
+            "Do NOT use to receive new incoming messages — use receive_messages for that."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -611,12 +628,21 @@ TOOLS = [
     ),
     Tool(
         name="send_read_receipt",
-        description="Mark one or more messages as read (sends read receipts to sender)",
+        description=(
+            "Send a read receipt to a contact, notifying them that you have read their messages. "
+            "The sender sees a 'Read' indicator under their messages in their Signal app. "
+            "Pass all timestamps you want to mark as read in a single call to batch the receipts. "
+            "Timestamps come from the received_at or sent_at fields in get_conversation. "
+            "Note: read receipts are only delivered if the sender has read receipts enabled in their Signal settings. "
+            "Use after reading a conversation with get_conversation to acknowledge the messages. "
+            "Do NOT use to mark messages as read in the local store — get_conversation does that automatically. "
+            "Do NOT use for group messages — Signal does not support per-sender read receipts in groups."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "sender": {"type": "string", "description": "Phone number of the message sender"},
-                "timestamps": {"type": "array", "items": {"type": "integer"}, "description": "List of message timestamps to mark read"},
+                "sender": {"type": "string", "description": "Phone number (E.164) of the contact whose messages you are acknowledging"},
+                "timestamps": {"type": "array", "items": {"type": "integer"}, "description": "Timestamps of the messages to mark as read (from get_conversation sent_at/received_at fields)"},
             },
             "required": ["sender", "timestamps"],
         },
@@ -1184,7 +1210,13 @@ TOOLS += [
     ),
     Tool(
         name="list_accounts",
-        description="List all Signal accounts (phone numbers) configured in signal-cli on this machine.",
+        description=(
+            "List all Signal accounts (phone numbers) registered in signal-cli on this machine. "
+            "Returns each account's E.164 phone number and its registration status. "
+            "Most setups have a single account; multiple accounts appear when signal-cli manages more than one number. "
+            "Use get_own_number to get the active account's number in single-account setups. "
+            "Use when you need to confirm which accounts are available before sending or receiving messages."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -1211,26 +1243,45 @@ TOOLS += [
     ),
     Tool(
         name="set_pin",
-        description="Set the Signal registration lock PIN (protects your account if your SIM is stolen).",
+        description=(
+            "Set a Signal Registration Lock PIN to protect your account against SIM-swap and unauthorized re-registration. "
+            "Once set, anyone attempting to re-register your phone number on Signal must provide this PIN. "
+            "The PIN must be 4–20 digits. Signal also uses the PIN to derive your storage encryption key. "
+            "If you forget the PIN, you must wait 7 days for the lock to expire before re-registering. "
+            "Use when you want to harden your account against SIM-swap attacks. "
+            "Use remove_pin to disable the lock. "
+            "Do NOT set a PIN you might forget — losing it locks you out of your account for 7 days."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "pin": {"type": "string", "description": "4–20 digit PIN"},
+                "pin": {"type": "string", "description": "4–20 digit numeric PIN (e.g. '123456')"},
             },
             "required": ["pin"],
         },
     ),
     Tool(
         name="remove_pin",
-        description="Remove the Signal registration lock PIN.",
+        description=(
+            "Remove the Signal Registration Lock PIN, disabling re-registration protection on this account. "
+            "After removal, anyone who controls your phone number can re-register Signal without a PIN. "
+            "Use only if you intentionally want to disable the registration lock. "
+            "Use set_pin to set a new PIN instead of removing the existing one. "
+            "Do NOT remove the PIN if you rely on it as a security measure against SIM-swap attacks."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="start_change_number",
         description=(
-            "Begin a phone number change. Signal sends a verification code to the new number via SMS "
-            "(or voice if voice=true). Call finish_change_number to complete. Requires a captcha token "
-            "if Signal rejects the request — solve it at https://signalcaptchas.org/challenge/generate.html"
+            "Begin migrating your Signal account to a new phone number. "
+            "Signal sends a 6-digit verification code to the new number via SMS (or voice call if voice=true). "
+            "After calling this tool, call finish_change_number with the new number and received code to complete the migration. "
+            "If Signal rejects the request due to rate limits, provide a captcha token obtained from "
+            "https://signalcaptchas.org/challenge/generate.html. "
+            "The account remains on the old number until finish_change_number succeeds. "
+            "Use finish_change_number immediately after receiving the SMS code to complete the change. "
+            "Do NOT call finish_change_number without first calling this tool — the verification code will not exist."
         ),
         inputSchema={
             "type": "object",
