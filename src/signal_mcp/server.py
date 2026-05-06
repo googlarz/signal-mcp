@@ -269,7 +269,16 @@ TOOLS = [
     ),
     Tool(
         name="react_to_message",
-        description="React to a Signal message with an emoji (DM or group). Set remove=true to remove a reaction.",
+        description=(
+            "Add or remove an emoji reaction on a Signal message in a direct or group conversation. "
+            "target_author is the phone number of the person who sent the original message. "
+            "target_timestamp is the sent_at timestamp of that message (from get_conversation). "
+            "Supply recipient for a DM conversation or group_id for a group conversation — exactly one is required. "
+            "Each account can have at most one reaction per message; calling again with a different emoji replaces the previous one. "
+            "Set remove=true to retract an existing reaction without adding a new one (emoji is still required as the key). "
+            "Use when you want to react to or acknowledge a specific message without sending a reply. "
+            "Do NOT use to send a text reply — use send_message or send_group_message for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -527,7 +536,16 @@ TOOLS = [
     ),
     Tool(
         name="get_user_status",
-        description="Check whether one or more phone numbers are registered Signal users",
+        description=(
+            "Check whether one or more phone numbers are registered Signal users. "
+            "Queries Signal's servers for each number and returns a registered/unregistered status. "
+            "Accepts a list so you can batch-check multiple numbers in a single call. "
+            "Useful before sending to an unknown number to avoid 'unregistered user' delivery failures. "
+            "Note: privacy-mode accounts or numbers that have opted out of discoverability may show as unregistered "
+            "even if they actively use Signal. "
+            "Use before sending to a new contact to confirm they are reachable on Signal. "
+            "Do NOT use to look up contact profile details — use get_profile for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -605,7 +623,16 @@ TOOLS = [
     ),
     Tool(
         name="update_contact",
-        description="Set a local display name for a contact",
+        description=(
+            "Set or update the local display name for a Signal contact. "
+            "The name is stored only in signal-cli's local contact database — it is never sent to or visible by the contact. "
+            "Overrides the contact's own profile name in list_contacts and conversation displays. "
+            "Useful for adding a human-readable label to a number that has no Signal profile name. "
+            "Use list_contacts to see current names before updating. "
+            "Use when you want to assign or correct a contact's display name locally. "
+            "Do NOT use to change your own profile name — use update_profile for that. "
+            "Do NOT use to block or remove a contact — use block_contact or remove_contact for those."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -901,7 +928,16 @@ TOOLS = [
     ),
     Tool(
         name="list_identities",
-        description="List identity keys and trust levels for contacts (safety number verification)",
+        description=(
+            "List the Signal identity keys (safety numbers) and trust levels for one or all contacts. "
+            "Each contact has a unique identity key; Signal uses these to verify end-to-end encryption integrity. "
+            "Trust levels: TRUSTED_VERIFIED (manually verified), TRUSTED_UNVERIFIED (trusted on first use, TOFU), "
+            "or UNTRUSTED (key changed — sending is blocked until re-trusted). "
+            "Omit number to inspect all stored identities; provide number to filter to a specific contact. "
+            "Use before calling trust_identity to check the current trust state and key fingerprint. "
+            "Use when Signal reports 'safety number changed' to identify which contact needs re-verification. "
+            "Do NOT use to trust or change trust levels — use trust_identity for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1080,7 +1116,15 @@ TOOLS += [
     ),
     Tool(
         name="get_attachment",
-        description="Get details about a specific downloaded attachment by filename",
+        description=(
+            "Retrieve metadata and the base64-encoded content of a locally saved Signal attachment by filename. "
+            "Returns MIME type, file size, local path, and the raw bytes as base64 so the caller can read or display the file. "
+            "Only attachments already downloaded to the local store are accessible — "
+            "attachments expire on Signal's servers after ~30 days if not downloaded first. "
+            "Use list_attachments to discover available filenames before calling. "
+            "Use when you need to read, display, or forward the contents of a received file or image. "
+            "Do NOT use to send an attachment — use send_attachment or send_group_attachment for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
