@@ -396,17 +396,11 @@ def delete_conversation_messages(recipient: str) -> int:
     return count
 
 
-def export_messages(
-    fmt: str = "json",
+def get_messages_for_export(
     recipient: str | None = None,
     since: datetime | None = None,
-) -> str:
-    """Export messages as JSON or CSV text.
-
-    recipient: if given, export only that conversation (number or group_id).
-    since: if given, only messages at or after this datetime.
-    fmt: "json" or "csv".
-    """
+) -> list[Message]:
+    """Return Message objects matching the given filters (used by the client for enriched export)."""
     init_db()
     with _db() as conn:
         params: list = []
@@ -424,28 +418,24 @@ def export_messages(
             f"SELECT * FROM messages {where} ORDER BY timestamp ASC",
             params,
         ).fetchall()
-        messages = _rows_to_messages(conn, rows)
+        return _rows_to_messages(conn, rows)
 
-    if fmt == "csv":
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(["id", "timestamp", "sender", "recipient", "group_id", "body", "quote_id", "is_read"])
-        for m in messages:
-            writer.writerow([
-                m.id,
-                m.timestamp.isoformat(),
-                m.sender,
-                m.recipient or "",
-                m.group_id or "",
-                m.body,
-                m.quote_id or "",
-                int(m.is_read),
-            ])
-        return buf.getvalue()
 
-    # JSON (default)
-    return json.dumps(
-        [
+def export_messages(
+    fmt: str = "json",
+    recipient: str | None = None,
+    since: datetime | None = None,
+    enriched: list[dict] | None = None,
+) -> str:
+    """Serialise messages as JSON or CSV text.
+
+    If *enriched* is provided (pre-resolved dicts from the client layer), those
+    are serialised directly.  Otherwise messages are fetched without name resolution.
+    """
+    if enriched is not None:
+        messages_data = enriched
+    else:
+        messages_data = [
             {
                 "id": m.id,
                 "timestamp": m.timestamp.isoformat(),
@@ -465,10 +455,29 @@ def export_messages(
                     for a in m.attachments
                 ],
             }
-            for m in messages
-        ],
-        indent=2,
-    )
+            for m in get_messages_for_export(recipient, since)
+        ]
+
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["id", "timestamp", "sender", "sender_name", "recipient", "group_id", "group_name", "body", "quote_id", "is_read"])
+        for m in messages_data:
+            writer.writerow([
+                m.get("id", ""),
+                m.get("timestamp", ""),
+                m.get("sender", ""),
+                m.get("sender_name") or m.get("sender", ""),
+                m.get("recipient") or "",
+                m.get("group_id") or "",
+                m.get("group_name") or "",
+                m.get("body", ""),
+                m.get("quote_id") or "",
+                int(m.get("is_read", False)),
+            ])
+        return buf.getvalue()
+
+    return json.dumps(messages_data, indent=2)
 
 
 def prune_old_messages(days: int = 180) -> int:

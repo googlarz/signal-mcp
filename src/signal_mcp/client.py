@@ -645,6 +645,8 @@ class SignalClient:
             for c in contacts:
                 if c.number:
                     _contact_cache[c.number] = c.display_name
+                if c.uuid:
+                    _contact_cache[c.uuid] = c.display_name
             _contact_cache_loaded = True   # only set on success
             _contact_cache_at = time.monotonic()
         except Exception:
@@ -898,8 +900,11 @@ class SignalClient:
         recipient: str | None = None,
         since: datetime | None = None,
     ) -> str:
-        """Export messages as JSON or CSV text."""
-        return await asyncio.to_thread(_store.export_messages, fmt, recipient, since)
+        """Export messages as JSON or CSV text, with sender/group names resolved."""
+        await self._ensure_caches()
+        messages = await asyncio.to_thread(_store.get_messages_for_export, recipient, since)
+        enriched = [self._enrich_message(m) for m in messages]
+        return await asyncio.to_thread(_store.export_messages, fmt, recipient, since, enriched)
 
     async def get_unread_messages(self, limit: int = 50) -> list[Message]:
         # NOTE: does NOT auto-mark as read — the server handler does that explicitly
