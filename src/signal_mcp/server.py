@@ -996,7 +996,16 @@ TOOLS += [
     ),
     Tool(
         name="export_messages",
-        description="Export stored messages as JSON or CSV text. Optionally filter by conversation or date.",
+        description=(
+            "Export locally stored messages as a JSON or CSV string for archiving, analysis, or migration. "
+            "Returns all messages in the local store by default; use recipient to restrict to one conversation. "
+            "Use since (ISO 8601 datetime) to export only messages after a given point in time. "
+            "JSON output preserves all fields (sender, timestamp, body, group_id); "
+            "CSV output is flat and suitable for spreadsheets. "
+            "Only messages already in the local store are included — messages never received on this device are absent. "
+            "Use when you need a full or filtered dump of conversation history in machine-readable form. "
+            "Do NOT use to read individual messages interactively — use get_conversation or search_messages for that."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1111,7 +1120,15 @@ TOOLS += [
     ),
     Tool(
         name="list_attachments",
-        description="List all downloaded attachments saved locally (photos, files received via Signal)",
+        description=(
+            "List all Signal attachments that have been downloaded and saved to the local store. "
+            "Returns filenames, MIME types, file sizes, and the associated message timestamp for each attachment. "
+            "Only attachments explicitly downloaded (via receive_messages or import) appear here — "
+            "attachments not yet fetched from Signal's servers are not listed. "
+            "Use the returned filename with get_attachment to retrieve the actual file content. "
+            "Use when you need to discover what media files are available locally before reading them. "
+            "Do NOT use to download new attachments from Signal servers — use receive_messages for that."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -1227,7 +1244,16 @@ TOOLS += [
     ),
     Tool(
         name="finish_change_number",
-        description="Complete a phone number change using the verification code received via SMS or voice.",
+        description=(
+            "Complete the second step of a Signal phone number change by submitting the verification code. "
+            "Must be called after start_change_number, which initiates the number change and triggers the SMS/voice code. "
+            "number is the new E.164 phone number you are migrating to. "
+            "verification_code is the 6-digit code received via SMS or voice call to that number. "
+            "pin is required only if your account has a Signal Registration Lock PIN set — omit otherwise. "
+            "On success, the account is permanently migrated to the new number; all linked devices are updated. "
+            "Use start_change_number first to request the verification code before calling this tool. "
+            "Do NOT call this tool without first calling start_change_number — the code will not exist."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
