@@ -15,8 +15,10 @@ import httpx
 
 from .config import (
     ATTACHMENT_DIR,
+    DAEMON_MESSAGES_LOG,
     DAEMON_PORT,
     DAEMON_URL,
+    RECEIVE_LOCK_FILE,
     clear_daemon_pid,
     detect_account,
     ensure_attachment_dir,
@@ -143,6 +145,8 @@ class SignalClient:
 
     async def ensure_daemon(self) -> None:
         """Start signal-cli daemon if not already running (single-flight)."""
+        if RECEIVE_LOCK_FILE.exists():
+            return
         # TTL fast path: skip HTTP ping if daemon was healthy recently
         if time.monotonic() - _daemon_last_ok_at < _DAEMON_OK_TTL:
             return
@@ -528,6 +532,46 @@ class SignalClient:
                     )
                 continue
 
+            msg = self._parse_envelope(envelope)
+            if msg:
+                if not msg.receipt_type:
+                    await asyncio.to_thread(_store.save_message, msg)
+                messages.append(msg)
+        return messages
+
+    async def receive_direct(self, timeout: int = 5) -> list[Message]:
+        """Receive messages by calling signal-cli directly (no daemon).
+
+        Stops any running daemon first to release the receive lock, then
+        invokes ``signal-cli receive`` as a subprocess.  A lockfile prevents
+        other processes from restarting the daemon during the receive window.
+        """
+        import json as _json
+
+        RECEIVE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RECEIVE_LOCK_FILE.write_text(str(os.getpid()))
+        try:
+            await self.stop_daemon()
+            await asyncio.sleep(0.5)
+
+            proc = await asyncio.create_subprocess_exec(
+                "signal-cli", "-u", self.account, "-o", "json",
+                "receive", "--timeout", str(timeout),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+        finally:
+            RECEIVE_LOCK_FILE.unlink(missing_ok=True)
+
+        messages: list[Message] = []
+        for line in stdout.decode().strip().splitlines():
+            if not line.strip():
+                continue
+            try:
+                envelope = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
             msg = self._parse_envelope(envelope)
             if msg:
                 if not msg.receipt_type:

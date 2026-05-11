@@ -9,6 +9,8 @@ DAEMON_PORT = 7583
 DAEMON_URL = f"http://localhost:{DAEMON_PORT}/api/v1/rpc"
 ATTACHMENT_DIR = Path.home() / "Downloads" / "signal-attachments"
 DAEMON_PID_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "daemon.pid"
+DAEMON_MESSAGES_LOG = Path.home() / ".local" / "share" / "signal-mcp" / "daemon-messages.jsonl"
+RECEIVE_LOCK_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "receive.lock"
 
 # signal-cli stores account data here
 _ACCOUNTS_JSON = Path.home() / ".local" / "share" / "signal-cli" / "data" / "accounts.json"

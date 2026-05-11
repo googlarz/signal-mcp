@@ -97,6 +97,11 @@ def init_db() -> None:
                 INSERT INTO messages_fts(messages_fts, rowid, id, body, sender)
                 VALUES ('delete', old.rowid, old.id, old.body, old.sender);
             END;
+            CREATE TABLE IF NOT EXISTS conversations (
+                id   TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'direct'
+            );
             CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -572,6 +577,28 @@ def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list
         )
         for r in rows
     ]
+
+
+# ── conversation name store ───────────────────────────────────────────────────
+
+def save_conversation(conv_id: str, name: str, conv_type: str = "direct") -> None:
+    """Upsert a conversation's display name."""
+    if not conv_id or not name:
+        return
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO conversations (id, name, type) VALUES (?, ?, ?)",
+            (conv_id, name, conv_type),
+        )
+
+
+def get_conversation_names() -> dict[str, str]:
+    """Return {conversation_id: display_name} for all known conversations."""
+    init_db()
+    with _db() as conn:
+        rows = conn.execute("SELECT id, name FROM conversations").fetchall()
+        return {r["id"]: r["name"] for r in rows}
 
 
 # ── meta key-value store ───────────────────────────────────────────────────────

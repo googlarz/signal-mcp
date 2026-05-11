@@ -72,17 +72,36 @@ def receive(watch: bool, timeout: int, interval: int):
     """Receive incoming messages."""
     async def _run():
         async with SignalClient() as client:
-            await client.ensure_daemon()
             if not watch:
-                messages = await client.receive_messages(timeout=timeout)
+                messages = await client.receive_direct(timeout=timeout)
                 if not messages:
                     click.echo("No new messages.")
                 for msg in messages:
                     _print_message(msg)
             else:
-                click.echo("Watching for messages (Ctrl+C to stop)…")
-                async for msg in client.receive_stream(poll_interval=interval):
-                    _print_message(msg)
+                from .desktop import sync_from_desktop, SIGNAL_DB, DesktopImportError
+                use_desktop = SIGNAL_DB.exists()
+                if use_desktop:
+                    click.echo("Watching for messages via Signal Desktop DB (Ctrl+C to stop)…")
+                else:
+                    click.echo("Watching for messages via signal-cli (Ctrl+C to stop)…")
+                while True:
+                    try:
+                        if use_desktop:
+                            result = await asyncio.to_thread(sync_from_desktop)
+                            if result["imported"] > 0:
+                                click.echo(f"[watch] synced {result['imported']} new messages")
+                        else:
+                            messages = await client.receive_direct(timeout=timeout)
+                            for msg in messages:
+                                _print_message(msg)
+                    except DesktopImportError as e:
+                        click.echo(f"[watch] desktop sync error: {e}", err=True)
+                        use_desktop = False
+                        click.echo("[watch] falling back to signal-cli receive", err=True)
+                    except Exception as e:
+                        click.echo(f"[watch] receive error: {e}", err=True)
+                    await asyncio.sleep(interval)
     try:
         run(_run())
     except KeyboardInterrupt:

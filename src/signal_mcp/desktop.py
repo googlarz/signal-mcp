@@ -309,6 +309,50 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms:
     return messages
 
 
+def _read_conversation_names(plain_db: Path) -> list[tuple[str, str, str]]:
+    """Read (id, name, type) tuples from Signal Desktop's conversations table."""
+    conn = sqlite3.connect(str(plain_db))
+    conn.row_factory = sqlite3.Row
+    try:
+        conv_cols = {r[1] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        # profileName / profileFullName for DMs, name for groups
+        name_expr_parts = []
+        if "name" in conv_cols:
+            name_expr_parts.append("c.name")
+        if "profileFullName" in conv_cols:
+            name_expr_parts.append("c.profileFullName")
+        if "profileName" in conv_cols:
+            name_expr_parts.append("c.profileName")
+        if "e164" in conv_cols:
+            name_expr_parts.append("c.e164")
+        if not name_expr_parts:
+            return []
+        name_expr = f"COALESCE({', '.join(f'NULLIF({p}, \"\")' for p in name_expr_parts)})"
+
+        rows = conn.execute(
+            f"""SELECT
+                c.id,
+                c.type,
+                c.groupId,
+                c.e164,
+                {name_expr} AS display_name
+            FROM conversations c
+            WHERE display_name IS NOT NULL AND display_name != ''"""
+        ).fetchall()
+
+        result = []
+        for row in rows:
+            conv_type = row["type"] or "private"
+            group_id = _decode_group_id(row["groupId"])
+            if conv_type == "group" and group_id:
+                result.append((group_id, row["display_name"], "group"))
+            elif row["e164"]:
+                result.append((row["e164"], row["display_name"], "direct"))
+        return result
+    finally:
+        conn.close()
+
+
 def _decode_group_id(raw: str | None) -> str | None:
     """Signal Desktop stores group IDs as base64; convert to the format signal-cli uses."""
     if not raw:
@@ -391,6 +435,14 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None, since_
                 skipped += 1
             if progress_cb and i % 500 == 0:
                 progress_cb(f"  {i}/{total} messages…")
+
+        # 5. Extract and store conversation names (groups + contacts)
+        try:
+            conv_names = _read_conversation_names(plain_db)
+            for conv_id, name, conv_type in conv_names:
+                _store.save_conversation(conv_id, name, conv_type)
+        except Exception:
+            pass  # non-fatal — messages still imported
 
         return {
             "imported": imported,
