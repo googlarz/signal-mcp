@@ -1,0 +1,7 @@
+startCommand:
+  type: stdio
+  commandFunction: |-
+    (config) => ({
+      command: "uvx",
+      args: ["signal-mcp", "serve"]
+    })
