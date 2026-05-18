@@ -68,44 +68,93 @@ def send_group(group_id: str, message: str):
 @click.option("--watch", is_flag=True, help="Keep watching for new messages")
 @click.option("--timeout", default=5, show_default=True, help="Seconds to wait per poll")
 @click.option("--interval", default=2, show_default=True, help="Poll interval for --watch mode (seconds)")
-def receive(watch: bool, timeout: int, interval: int):
-    """Receive incoming messages."""
+@click.option("--json", "as_json", is_flag=True, help="Output newline-delimited JSON (one object per message)")
+@click.option("--webhook", "webhook_url", default=None,
+              help="POST each message as JSON to this URL (overrides SIGNAL_MCP_WEBHOOK env var and saved config)")
+def receive(watch: bool, timeout: int, interval: int, as_json: bool, webhook_url: str | None):
+    """Receive incoming messages.
+
+    \b
+    Examples:
+      signal-mcp receive                          # one-shot, human output
+      signal-mcp receive --watch                  # continuous watch, human output
+      signal-mcp receive --watch --json           # continuous JSON stream (newline-delimited)
+      signal-mcp receive --watch --webhook http://localhost:8080/signal
+      SIGNAL_MCP_WEBHOOK=http://... signal-mcp receive --watch
+    """
+    from .config import get_webhook_url
+    from .webhook import post_webhook_batch
+
+    # Resolve webhook URL: flag > env/config
+    effective_webhook = webhook_url or get_webhook_url()
+
+    def _emit(messages):
+        """Print messages and/or POST to webhook."""
+        for msg in messages:
+            if as_json:
+                click.echo(json.dumps(msg.to_dict(), default=str))
+            else:
+                _print_message(msg)
+        if effective_webhook and messages:
+            asyncio.ensure_future(post_webhook_batch(effective_webhook, messages))
+
     async def _run():
         async with SignalClient() as client:
+            if effective_webhook and not as_json:
+                click.echo(f"Webhook: {effective_webhook}", err=True)
+
             if not watch:
                 messages = await client.receive_direct(timeout=timeout)
                 if not messages:
-                    click.echo("No new messages.")
+                    if not as_json:
+                        click.echo("No new messages.")
+                    return
                 for msg in messages:
-                    _print_message(msg)
+                    if as_json:
+                        click.echo(json.dumps(msg.to_dict(), default=str))
+                    else:
+                        _print_message(msg)
+                if effective_webhook and messages:
+                    await post_webhook_batch(effective_webhook, messages)
             else:
                 from .desktop import sync_from_desktop, SIGNAL_DB, DesktopImportError
                 use_desktop = SIGNAL_DB.exists()
-                if use_desktop:
-                    click.echo("Watching for messages via Signal Desktop DB (Ctrl+C to stop)…")
-                else:
-                    click.echo("Watching for messages via signal-cli (Ctrl+C to stop)…")
+                if not as_json:
+                    if use_desktop:
+                        click.echo("Watching for messages via Signal Desktop DB (Ctrl+C to stop)…", err=True)
+                    else:
+                        click.echo("Watching for messages via signal-cli (Ctrl+C to stop)…", err=True)
                 while True:
                     try:
                         if use_desktop:
                             result = await asyncio.to_thread(sync_from_desktop)
-                            if result["imported"] > 0:
-                                click.echo(f"[watch] synced {result['imported']} new messages")
+                            if result["imported"] > 0 and not as_json:
+                                click.echo(f"[watch] synced {result['imported']} new messages", err=True)
                         else:
                             messages = await client.receive_direct(timeout=timeout)
-                            for msg in messages:
-                                _print_message(msg)
+                            if messages:
+                                for msg in messages:
+                                    if as_json:
+                                        click.echo(json.dumps(msg.to_dict(), default=str))
+                                    else:
+                                        _print_message(msg)
+                                if effective_webhook:
+                                    await post_webhook_batch(effective_webhook, messages)
                     except DesktopImportError as e:
-                        click.echo(f"[watch] desktop sync error: {e}", err=True)
+                        if not as_json:
+                            click.echo(f"[watch] desktop sync error: {e}", err=True)
                         use_desktop = False
-                        click.echo("[watch] falling back to signal-cli receive", err=True)
+                        if not as_json:
+                            click.echo("[watch] falling back to signal-cli receive", err=True)
                     except Exception as e:
-                        click.echo(f"[watch] receive error: {e}", err=True)
+                        if not as_json:
+                            click.echo(f"[watch] receive error: {e}", err=True)
                     await asyncio.sleep(interval)
     try:
         run(_run())
     except KeyboardInterrupt:
-        click.echo("\nStopped.")
+        if not as_json:
+            click.echo("\nStopped.")
     except SignalError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -760,6 +809,37 @@ def uninstall_service():
     else:
         click.echo(f"Unsupported platform: {platform.system()}", err=True)
         sys.exit(1)
+
+
+# ── webhook config ───────────────────────────────────────────────────────────
+
+@cli.command("set-webhook")
+@click.argument("url", required=False, default=None)
+def set_webhook(url: str | None):
+    """Set (or clear) the webhook URL for incoming messages.
+
+    \b
+    Examples:
+      signal-mcp set-webhook http://localhost:8080/signal  # set
+      signal-mcp set-webhook                               # clear
+    """
+    from .config import set_webhook_url
+    set_webhook_url(url)
+    if url:
+        click.echo(f"Webhook set: {url}")
+    else:
+        click.echo("Webhook cleared.")
+
+
+@cli.command("get-webhook")
+def get_webhook():
+    """Show the currently configured webhook URL."""
+    from .config import get_webhook_url
+    url = get_webhook_url()
+    if url:
+        click.echo(url)
+    else:
+        click.echo("No webhook configured.")
 
 
 # ── find-contact ─────────────────────────────────────────────────────────────

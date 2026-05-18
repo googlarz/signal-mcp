@@ -1,6 +1,7 @@
 """Configuration: auto-detect Signal account, daemon URL, attachment dir."""
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -11,6 +12,7 @@ ATTACHMENT_DIR = Path.home() / "Downloads" / "signal-attachments"
 DAEMON_PID_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "daemon.pid"
 DAEMON_MESSAGES_LOG = Path.home() / ".local" / "share" / "signal-mcp" / "daemon-messages.jsonl"
 RECEIVE_LOCK_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "receive.lock"
+WEBHOOK_CONFIG_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "webhook.json"
 
 # signal-cli stores account data here
 _ACCOUNTS_JSON = Path.home() / ".local" / "share" / "signal-cli" / "data" / "accounts.json"
@@ -134,3 +136,31 @@ _SYSTEMD_PATH = Path.home() / ".config" / "systemd" / "user" / "signal-mcp-watch
 def is_service_installed() -> bool:
     """Return True if the background message-capture service is installed."""
     return _PLIST_PATH.exists() or _SYSTEMD_PATH.exists()
+
+
+# ── Webhook configuration ─────────────────────────────────────────────────────
+
+def get_webhook_url() -> str | None:
+    """Return the configured webhook URL, or None.
+
+    Priority: SIGNAL_MCP_WEBHOOK env var → webhook.json config file.
+    """
+    env = os.environ.get("SIGNAL_MCP_WEBHOOK")
+    if env:
+        return env
+    if WEBHOOK_CONFIG_FILE.exists():
+        try:
+            data = json.loads(WEBHOOK_CONFIG_FILE.read_text())
+            return data.get("url") or None
+        except Exception:
+            pass
+    return None
+
+
+def set_webhook_url(url: str | None) -> None:
+    """Persist (or clear) the webhook URL in the config file."""
+    WEBHOOK_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if url:
+        WEBHOOK_CONFIG_FILE.write_text(json.dumps({"url": url}, indent=2))
+    else:
+        WEBHOOK_CONFIG_FILE.unlink(missing_ok=True)

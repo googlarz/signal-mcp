@@ -24,6 +24,7 @@ _DAEMON_FREE = {
     "clear_local_store", "delete_local_messages", "export_messages",
     "prune_store", "mark_as_unread",
     "list_scheduled_messages", "cancel_scheduled_message", "schedule_message",
+    "set_webhook", "get_webhook",
 }
 # Tools NOT in _DAEMON_FREE call ensure_daemon() automatically before executing.
 # get_unread calls _freshen_store() (which may call receive_messages) if no
@@ -1347,6 +1348,26 @@ TOOLS += [
         },
     ),
     Tool(
+        name="set_webhook",
+        description=(
+            "Configure a webhook URL that receives a POST request for every incoming Signal message. "
+            "The payload is a JSON object with fields: event, timestamp, sender, recipient, group_id, body, attachments, quote_id. "
+            "Use this to connect signal-mcp to n8n, Make, Home Assistant, or any local HTTP endpoint. "
+            "Pass url=null to disable webhooks. The URL is saved to disk and persists across restarts."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Webhook URL to POST to (e.g. 'http://localhost:5678/webhook/signal'). Omit or pass null to clear."},
+            },
+        },
+    ),
+    Tool(
+        name="get_webhook",
+        description="Return the currently configured webhook URL, or null if none is set.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
         name="find_contact",
         description=(
             "Search contacts by name or phone number fragment. "
@@ -2004,6 +2025,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 captcha=arguments["captcha"],
             )
             return _ok({"status": "challenge submitted"})
+
+        elif name == "set_webhook":
+            from .config import set_webhook_url
+            url = arguments.get("url") or None
+            set_webhook_url(url)
+            if url:
+                return _ok({"status": "webhook set", "url": url})
+            return _ok({"status": "webhook cleared"})
+
+        elif name == "get_webhook":
+            from .config import get_webhook_url
+            url = get_webhook_url()
+            return _ok({"url": url})
 
         elif name == "find_contact":
             err = _require(arguments, "query")
