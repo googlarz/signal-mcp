@@ -1351,3 +1351,26 @@ class SignalClient:
             "challenge": challenge,
             "captcha": captcha,
         })
+
+    # ── Scheduled messages ────────────────────────────────────────────────────
+
+    async def process_scheduled_messages(self) -> list[dict]:
+        """Send any scheduled messages that are due now. Returns list of results."""
+        from datetime import datetime as _dt
+        from . import store as _store
+
+        due = _store.get_pending_scheduled(now=_dt.now())
+        results = []
+        for job in due:
+            try:
+                await self.ensure_daemon()
+                if job["group_id"]:
+                    result = await self.send_group_message(job["group_id"], job["message"])
+                else:
+                    result = await self.send_message(job["recipient"], job["message"])
+                _store.mark_scheduled_sent(job["id"])
+                results.append({"id": job["id"], "status": "sent", "timestamp": result.timestamp})
+            except Exception as e:
+                _store.mark_scheduled_failed(job["id"], str(e))
+                results.append({"id": job["id"], "status": "failed", "error": str(e)})
+        return results

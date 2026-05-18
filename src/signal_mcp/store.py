@@ -106,6 +106,17 @@ def init_db() -> None:
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS scheduled_messages (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipient   TEXT,
+                group_id    TEXT,
+                message     TEXT NOT NULL,
+                send_at     TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                status      TEXT NOT NULL DEFAULT 'pending',
+                error       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_scheduled_status ON scheduled_messages(status, send_at);
         """)
         # Migrate: add recipient column if upgrading from pre-1.1 schema
         try:
@@ -599,6 +610,81 @@ def get_conversation_names() -> dict[str, str]:
     with _db() as conn:
         rows = conn.execute("SELECT id, name FROM conversations").fetchall()
         return {r["id"]: r["name"] for r in rows}
+
+
+# ── scheduled messages ───────────────────────────────────────────────────────
+
+def add_scheduled_message(
+    message: str,
+    send_at: datetime,
+    recipient: str | None = None,
+    group_id: str | None = None,
+) -> int:
+    """Schedule a message to be sent at *send_at*. Returns the new row id."""
+    if not recipient and not group_id:
+        raise ValueError("Either recipient or group_id is required")
+    init_db()
+    with _db() as conn:
+        cur = conn.execute(
+            "INSERT INTO scheduled_messages (recipient, group_id, message, send_at) VALUES (?,?,?,?)",
+            (recipient, group_id, message, send_at.isoformat()),
+        )
+        return cur.lastrowid
+
+
+def get_pending_scheduled(now: datetime | None = None) -> list[dict]:
+    """Return scheduled messages that are due (send_at <= now) and still pending."""
+    init_db()
+    cutoff = (now or datetime.now()).isoformat()
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM scheduled_messages WHERE status = 'pending' AND send_at <= ? ORDER BY send_at ASC",
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_scheduled_messages(include_done: bool = False) -> list[dict]:
+    """Return all scheduled messages, optionally including sent/cancelled ones."""
+    init_db()
+    with _db() as conn:
+        if include_done:
+            rows = conn.execute(
+                "SELECT * FROM scheduled_messages ORDER BY send_at ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM scheduled_messages WHERE status = 'pending' ORDER BY send_at ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_scheduled_sent(row_id: int) -> None:
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            "UPDATE scheduled_messages SET status = 'sent' WHERE id = ?", (row_id,)
+        )
+
+
+def mark_scheduled_failed(row_id: int, error: str) -> None:
+    init_db()
+    with _db() as conn:
+        conn.execute(
+            "UPDATE scheduled_messages SET status = 'failed', error = ? WHERE id = ?",
+            (error, row_id),
+        )
+
+
+def cancel_scheduled_message(row_id: int) -> bool:
+    """Cancel a pending scheduled message. Returns True if it was pending, False otherwise."""
+    init_db()
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE scheduled_messages SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+            (row_id,),
+        )
+        return cur.rowcount > 0
 
 
 # ── meta key-value store ───────────────────────────────────────────────────────

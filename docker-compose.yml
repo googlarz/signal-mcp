@@ -1,0 +1,48 @@
+# signal-mcp Docker Compose
+#
+# Quick start:
+#   1. Link your Signal account (run once):
+#        docker compose run --rm signal-mcp signal-cli link --name "MyServer"
+#        # Scan the displayed QR code in the Signal app, then press Ctrl+C.
+#
+#   2. Start the MCP server:
+#        docker compose up -d
+#
+#   3. Connect Claude Code — add to your MCP settings:
+#        {
+#          "mcpServers": {
+#            "signal": {
+#              "command": "docker",
+#              "args": ["compose", "-f", "/path/to/signal-mcp/docker-compose.yml",
+#                       "run", "--rm", "-i", "signal-mcp", "serve"]
+#            }
+#          }
+#        }
+
+services:
+  signal-mcp:
+    build: .
+    image: signal-mcp:latest
+    stdin_open: true   # required for stdio MCP transport
+    tty: false
+    volumes:
+      - signal-data:/data
+    environment:
+      # Override the daemon port if needed (default: 7583)
+      - SIGNAL_MCP_PORT=${SIGNAL_MCP_PORT:-7583}
+    restart: unless-stopped
+
+  # Optional: dedicated daemon for real-time message capture
+  signal-daemon:
+    build: .
+    image: signal-mcp:latest
+    command: ["daemon"]
+    volumes:
+      - signal-data:/data
+    restart: unless-stopped
+    profiles:
+      - daemon  # start with: docker compose --profile daemon up -d
+
+volumes:
+  signal-data:
+    driver: local

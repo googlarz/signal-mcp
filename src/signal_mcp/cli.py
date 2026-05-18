@@ -762,6 +762,194 @@ def uninstall_service():
         sys.exit(1)
 
 
+# ── find-contact ─────────────────────────────────────────────────────────────
+
+@cli.command("find-contact")
+@click.argument("query")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def find_contact(query: str, as_json: bool):
+    """Search contacts by name or phone number fragment."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            contacts = await client.list_contacts(search=query)
+            if not contacts:
+                click.echo("No matching contacts.")
+                return
+            if as_json:
+                click.echo(json.dumps([c.to_dict() for c in contacts], indent=2))
+            else:
+                for c in contacts:
+                    blocked = " [BLOCKED]" if c.blocked else ""
+                    click.echo(f"{c.display_name:<35} {c.number or '(no number)'}{blocked}")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── schedule-send ─────────────────────────────────────────────────────────────
+
+@cli.command("schedule-send")
+@click.argument("recipient")
+@click.argument("message")
+@click.option("--at", "send_at", required=True,
+              help="When to send (ISO datetime, e.g. '2024-06-01 09:00' or '2024-06-01T09:00:00')")
+@click.option("--group", "is_group", is_flag=True,
+              help="Treat RECIPIENT as a group ID instead of a phone number")
+def schedule_send(recipient: str, message: str, send_at: str, is_group: bool):
+    """Schedule a message to be sent at a specific time.
+
+    Use 'signal-mcp scheduled' to list pending jobs and
+    'signal-mcp cancel-scheduled ID' to cancel one.
+    The background service (install-service) will deliver them automatically.
+    """
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+        try:
+            dt = _dt.strptime(send_at, fmt)
+            break
+        except ValueError:
+            continue
+    else:
+        click.echo(f"Error: invalid --at value '{send_at}'. Use ISO format e.g. '2024-06-01 09:00'", err=True)
+        sys.exit(1)
+
+    if dt <= _dt.now():
+        click.echo("Error: --at must be in the future.", err=True)
+        sys.exit(1)
+
+    from . import store as _store
+    if is_group:
+        job_id = _store.add_scheduled_message(message, dt, group_id=recipient)
+    else:
+        job_id = _store.add_scheduled_message(message, dt, recipient=recipient)
+    click.echo(f"Scheduled (id={job_id}): send to {recipient} at {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+@cli.command("scheduled")
+@click.option("--all", "include_done", is_flag=True, help="Include sent/cancelled/failed messages")
+@click.option("--json", "as_json", is_flag=True)
+def list_scheduled(include_done: bool, as_json: bool):
+    """List scheduled messages."""
+    from . import store as _store
+    jobs = _store.list_scheduled_messages(include_done=include_done)
+    if not jobs:
+        click.echo("No scheduled messages.")
+        return
+    if as_json:
+        click.echo(json.dumps(jobs, indent=2))
+    else:
+        for j in jobs:
+            status = j["status"]
+            target = j.get("group_id") or j.get("recipient") or "?"
+            click.echo(f"[{j['id']:>4}] {j['send_at']}  →  {target}  [{status}]")
+            click.echo(f"       {j['message'][:80]}")
+
+
+@cli.command("cancel-scheduled")
+@click.argument("job_id", type=int)
+def cancel_scheduled(job_id: int):
+    """Cancel a pending scheduled message by ID (see 'scheduled' command)."""
+    from . import store as _store
+    if _store.cancel_scheduled_message(job_id):
+        click.echo(f"Cancelled scheduled message {job_id}.")
+    else:
+        click.echo(f"No pending scheduled message with id={job_id}.", err=True)
+        sys.exit(1)
+
+
+@cli.command("run-scheduled")
+def run_scheduled():
+    """Process and send any scheduled messages that are due now."""
+    async def _run():
+        async with SignalClient() as client:
+            results = await client.process_scheduled_messages()
+            if not results:
+                click.echo("No scheduled messages due.")
+                return
+            for r in results:
+                if r["status"] == "sent":
+                    click.echo(f"  Sent  id={r['id']} (ts={r['timestamp']})")
+                else:
+                    click.echo(f"  Failed id={r['id']}: {r['error']}", err=True)
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── install (setup wizard) ────────────────────────────────────────────────────
+
+@cli.command("install")
+def install():
+    """Interactive first-time setup wizard.
+
+    Checks signal-cli, detects your linked account, and optionally installs
+    the background message-capture service.
+    """
+    import platform
+    from .config import check_signal_cli_version
+
+    click.echo("=== signal-mcp setup ===\n")
+
+    # 1. Check signal-cli
+    click.echo("Checking signal-cli…", nl=False)
+    try:
+        check_signal_cli_version()
+        import subprocess as _sp
+        ver = _sp.run(["signal-cli", "--version"], capture_output=True, text=True).stdout.strip()
+        click.echo(f" ✓  ({ver})")
+    except RuntimeError as e:
+        click.echo(f"\n✗  {e}")
+        sys.exit(1)
+
+    # 2. Check linked account
+    click.echo("Detecting linked account…", nl=False)
+    try:
+        account = detect_account()
+        click.echo(f" ✓  {account}")
+    except RuntimeError:
+        click.echo("\n✗  No account found.")
+        click.echo("\nTo link signal-mcp to your Signal account, run:")
+        click.echo("  signal-cli link --name 'MyComputer'")
+        click.echo("Then scan the QR code shown, or open the URL on your phone.")
+        sys.exit(1)
+
+    # 3. Background service
+    from .config import is_service_installed
+    if is_service_installed():
+        click.echo("Background service: ✓  already installed")
+    else:
+        click.echo()
+        install_svc = click.confirm(
+            "Install background service to auto-capture incoming messages?",
+            default=True,
+        )
+        if install_svc:
+            ctx = click.get_current_context()
+            ctx.invoke(install_service)
+
+    # 4. MCP config hint
+    click.echo()
+    click.echo("=== MCP configuration ===")
+    click.echo("Add to your Claude Code MCP settings:")
+    click.echo()
+    binary = _find_binary()
+    click.echo(json.dumps({
+        "mcpServers": {
+            "signal": {
+                "command": binary,
+                "args": ["serve"],
+            }
+        }
+    }, indent=2))
+    click.echo()
+    click.echo("Setup complete. Run 'signal-mcp status' to verify.")
+
+
 # ── serve (MCP) ───────────────────────────────────────────────────────────────
 
 @cli.command()

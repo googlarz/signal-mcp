@@ -23,6 +23,7 @@ _DAEMON_FREE = {
     "list_attachments", "get_attachment",
     "clear_local_store", "delete_local_messages", "export_messages",
     "prune_store", "mark_as_unread",
+    "list_scheduled_messages", "cancel_scheduled_message", "schedule_message",
 }
 # Tools NOT in _DAEMON_FREE call ensure_daemon() automatically before executing.
 # get_unread calls _freshen_store() (which may call receive_messages) if no
@@ -1345,6 +1346,78 @@ TOOLS += [
             },
         },
     ),
+    Tool(
+        name="find_contact",
+        description=(
+            "Search contacts by name or phone number fragment. "
+            "Returns all contacts whose name or number contains the query string (case-insensitive). "
+            "Use this to look up a phone number when you only know a name, or to verify a contact exists."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Name or phone number fragment to search for"},
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="schedule_message",
+        description=(
+            "Schedule a message to be sent at a specific future time. "
+            "The message will be delivered when the background service runs (install-service) "
+            "or when run_scheduled_messages is called manually. "
+            "Returns the scheduled job ID — use cancel_scheduled_message to cancel it."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "recipient": {"type": "string", "description": "Phone number in E.164 format (for DMs). Use group_id for group messages."},
+                "group_id": {"type": "string", "description": "Group ID (for group messages). Mutually exclusive with recipient."},
+                "message": {"type": "string", "description": "Message text to send"},
+                "send_at": {"type": "string", "description": "When to send — ISO datetime string (e.g. '2024-06-01T09:00:00' or '2024-06-01 09:00')"},
+            },
+            "required": ["message", "send_at"],
+        },
+    ),
+    Tool(
+        name="list_scheduled_messages",
+        description=(
+            "List pending scheduled messages. "
+            "Returns scheduled jobs with their ID, recipient, send time, and status. "
+            "Use cancel_scheduled_message to cancel a pending job."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "include_done": {"type": "boolean", "description": "Include already-sent, cancelled, and failed messages (default: false)"},
+            },
+        },
+    ),
+    Tool(
+        name="cancel_scheduled_message",
+        description=(
+            "Cancel a pending scheduled message by its job ID. "
+            "Use list_scheduled_messages to find the ID. "
+            "Returns an error if the message was already sent or does not exist."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "integer", "description": "Scheduled message job ID from list_scheduled_messages"},
+            },
+            "required": ["job_id"],
+        },
+    ),
+    Tool(
+        name="run_scheduled_messages",
+        description=(
+            "Process and send any scheduled messages that are currently due. "
+            "The background service calls this automatically, but you can also call it manually "
+            "to deliver messages immediately without waiting for the next service run."
+        ),
+        inputSchema={"type": "object", "properties": {}},
+    ),
 ]
 
 
@@ -1931,6 +2004,58 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 captcha=arguments["captcha"],
             )
             return _ok({"status": "challenge submitted"})
+
+        elif name == "find_contact":
+            err = _require(arguments, "query")
+            if err:
+                return _err(err)
+            await client.ensure_daemon()
+            contacts = await client.list_contacts(search=arguments["query"])
+            return _ok([c.to_dict() for c in contacts])
+
+        elif name == "schedule_message":
+            err = _require(arguments, "message", "send_at")
+            if err:
+                return _err(err)
+            if not arguments.get("recipient") and not arguments.get("group_id"):
+                return _err("Either 'recipient' or 'group_id' is required")
+            from datetime import datetime as _dt
+            send_at_str = arguments["send_at"]
+            send_at = None
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+                try:
+                    send_at = _dt.strptime(send_at_str, fmt)
+                    break
+                except ValueError:
+                    continue
+            if send_at is None:
+                return _err(f"Invalid send_at format: '{send_at_str}'. Use ISO datetime e.g. '2024-06-01T09:00:00'")
+            if send_at <= _dt.now():
+                return _err("send_at must be in the future")
+            job_id = _store.add_scheduled_message(
+                message=arguments["message"],
+                send_at=send_at,
+                recipient=arguments.get("recipient"),
+                group_id=arguments.get("group_id"),
+            )
+            return _ok({"job_id": job_id, "send_at": send_at.isoformat(), "status": "scheduled"})
+
+        elif name == "list_scheduled_messages":
+            jobs = _store.list_scheduled_messages(include_done=arguments.get("include_done", False))
+            return _ok(jobs)
+
+        elif name == "cancel_scheduled_message":
+            err = _require(arguments, "job_id")
+            if err:
+                return _err(err)
+            cancelled = _store.cancel_scheduled_message(int(arguments["job_id"]))
+            if cancelled:
+                return _ok({"status": "cancelled", "job_id": arguments["job_id"]})
+            return _err(f"No pending scheduled message with id={arguments['job_id']}")
+
+        elif name == "run_scheduled_messages":
+            results = await client.process_scheduled_messages()
+            return _ok({"processed": len(results), "results": results})
 
         else:
             return _err(f"Unknown tool: {name}")
