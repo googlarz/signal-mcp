@@ -55,16 +55,27 @@ def _mock_client(**overrides):
 # ── receive --watch ───────────────────────────────────────────────────────────
 
 def test_receive_watch_mode(runner):
-    """--watch mode iterates receive_stream and prints messages."""
+    """--watch mode calls receive_direct in a loop and prints messages."""
     msg = _msg(body="watched message")
     client = _mock_client()
 
-    async def _stream(**kwargs):
-        yield msg
+    calls = [0]
 
-    client.receive_stream = _stream
+    async def _receive(**kwargs):
+        calls[0] += 1
+        if calls[0] == 1:
+            return [msg]
+        raise KeyboardInterrupt()
+
+    async def _fast_sleep(_):
+        pass
+
+    client.receive_direct = _receive
     with patch("signal_mcp.cli.SignalClient", return_value=client):
-        result = runner.invoke(cli, ["receive", "--watch"])
+        with patch("signal_mcp.desktop.SIGNAL_DB") as mock_db:
+            mock_db.exists.return_value = False
+            with patch("asyncio.sleep", side_effect=_fast_sleep):
+                result = runner.invoke(cli, ["receive", "--watch"])
     assert result.exit_code == 0
     assert "watched message" in result.output
 
@@ -76,7 +87,7 @@ def test_receive_keyboard_interrupt(runner):
     async def _bad_receive(**kwargs):
         raise KeyboardInterrupt()
 
-    client.receive_messages = _bad_receive
+    client.receive_direct = _bad_receive
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert "Stopped" in result.output
@@ -90,7 +101,7 @@ def test_receive_signal_error(runner):
     async def _bad_receive(**kwargs):
         raise SignalError("daemon dead")
 
-    client.receive_messages = _bad_receive
+    client.receive_direct = _bad_receive
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert result.exit_code == 1
@@ -103,7 +114,7 @@ def test_print_message_receipt_type(runner):
     """Messages with receipt_type show 'receipt' in output."""
     msg = _msg(receipt_type="DELIVERY")
     client = _mock_client()
-    client.receive_messages = AsyncMock(return_value=[msg])
+    client.receive_direct = AsyncMock(return_value=[msg])
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert "receipt" in result.output
@@ -221,7 +232,7 @@ def test_print_message_with_attachment(runner):
         attachments=[att],
     )
     client = _mock_client()
-    client.receive_messages = AsyncMock(return_value=[msg])
+    client.receive_direct = AsyncMock(return_value=[msg])
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert "photo.jpg" in result.output

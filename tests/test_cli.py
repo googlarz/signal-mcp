@@ -399,7 +399,7 @@ def test_search_with_limit(runner):
 
 def test_receive_once(runner):
     client = _mock_client()
-    client.receive_messages = AsyncMock(return_value=[_msg(body="incoming")])
+    client.receive_direct = AsyncMock(return_value=[_msg(body="incoming")])
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert result.exit_code == 0
@@ -408,7 +408,7 @@ def test_receive_once(runner):
 
 def test_receive_empty(runner):
     client = _mock_client()
-    client.receive_messages = AsyncMock(return_value=[])
+    client.receive_direct = AsyncMock(return_value=[])
     with patch("signal_mcp.cli.SignalClient", return_value=client):
         result = runner.invoke(cli, ["receive"])
     assert result.exit_code == 0

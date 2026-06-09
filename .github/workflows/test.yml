@@ -23,7 +23,7 @@ jobs:
         run: uv sync --dev
 
       - name: Run tests
-        run: uv run pytest --cov=signal_mcp --cov-report=term-missing -q
+        run: uv run pytest --timeout=60 --cov=signal_mcp --cov-report=term-missing -q
 
       - name: Check types (optional)
         run: uv run python -c "import signal_mcp; print('imports OK')"
