@@ -427,12 +427,16 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None, since_
         total = len(messages)
         imported = 0
         skipped = 0
+        max_ts_ms = 0
 
         for i, msg in enumerate(messages):
             if _store.save_message(msg):
                 imported += 1
             else:
                 skipped += 1
+            ts = int(msg.timestamp.timestamp() * 1000)
+            if ts > max_ts_ms:
+                max_ts_ms = ts
             if progress_cb and i % 500 == 0:
                 progress_cb(f"  {i}/{total} messages…")
 
@@ -448,6 +452,7 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None, since_
             "imported": imported,
             "skipped": skipped,
             "total": total,
+            "max_ts_ms": max_ts_ms,
             "platform": platform.system(),
             "source": str(db_path.parent.parent),
         }
@@ -476,9 +481,15 @@ def sync_from_desktop(progress_cb=None, signal_dir: Path | None = None) -> dict:
 
     result = import_from_desktop(progress_cb=progress_cb, signal_dir=signal_dir, since_ms=since_ms)
 
-    # Record current wall-clock time as the new high-water mark
-    new_mark = str(int(datetime.now().timestamp() * 1000))
-    _store.set_meta("desktop_last_sync", new_mark)
+    # Advance the watermark to the latest message timestamp seen (not wall-clock now).
+    # Using wall-clock time caused messages to be lost whenever the Mac clock jumped
+    # forward (sleep/wake, NTP, DST) — the watermark would leap past sent_at values.
+    max_ts_ms = result.get("max_ts_ms", 0)
+    if max_ts_ms > 0:
+        new_mark = str(max_ts_ms)
+        _store.set_meta("desktop_last_sync", new_mark)
+    # If no messages were seen at all, leave the watermark unchanged so the next
+    # sync re-scans from the same position rather than skipping forward.
 
     result["since"] = datetime.fromtimestamp(since_ms / 1000).isoformat() if since_ms else None
     result["incremental"] = last_sync is not None
