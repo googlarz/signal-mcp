@@ -851,8 +851,10 @@ def test_sync_from_desktop_incremental(tmp_path):
 
 
 def test_sync_from_desktop_updates_meta(tmp_path):
-    """sync_from_desktop always updates the meta key after a successful sync."""
-    stack, signal_dir, mock_store = _make_sync_patches(tmp_path, messages=[], last_sync="999")
+    """sync_from_desktop updates the watermark to the latest message timestamp when messages exist."""
+    from signal_mcp.models import Message
+    msg = Message(id="m1", sender="+1", body="hi", timestamp=datetime(2024, 6, 1, 12, 0, 0))
+    stack, signal_dir, mock_store = _make_sync_patches(tmp_path, messages=[msg], last_sync="999")
     with stack:
         from signal_mcp.desktop import sync_from_desktop
         sync_from_desktop(signal_dir=signal_dir)
@@ -861,6 +863,16 @@ def test_sync_from_desktop_updates_meta(tmp_path):
     key, value = mock_store.set_meta.call_args[0]
     assert key == "desktop_last_sync"
     assert value.isdigit()  # epoch milliseconds
+
+
+def test_sync_from_desktop_no_watermark_update_when_empty(tmp_path):
+    """sync_from_desktop does NOT update the watermark when no messages are returned."""
+    stack, signal_dir, mock_store = _make_sync_patches(tmp_path, messages=[], last_sync="999")
+    with stack:
+        from signal_mcp.desktop import sync_from_desktop
+        sync_from_desktop(signal_dir=signal_dir)
+
+    mock_store.set_meta.assert_not_called()
 
 
 def test_sync_from_desktop_no_messages(tmp_path):
