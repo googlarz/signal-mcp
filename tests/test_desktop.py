@@ -65,19 +65,20 @@ def _make_plain_db(tmp_path: Path) -> Path:
             received_at INTEGER,
             source TEXT,
             sourceUuid TEXT,
-            hasAttachments INTEGER
+            hasAttachments INTEGER,
+            readStatus INTEGER
         )
     """)
     conn.execute("INSERT INTO conversations VALUES ('conv1', '+49111', NULL)")
     conn.execute("INSERT INTO conversations VALUES ('grp1', NULL, 'group-abc')")
     conn.execute(
-        "INSERT INTO messages VALUES ('m1', 'conv1', 'incoming', 'Hallo', 1717243200000, 1717243200000, '+49222', NULL, 0)"
+        "INSERT INTO messages VALUES ('m1', 'conv1', 'incoming', 'Hallo', 1717243200000, 1717243200000, '+49222', NULL, 0, 1)"
     )
     conn.execute(
-        "INSERT INTO messages VALUES ('m2', 'grp1', 'outgoing', 'Group msg', 1717243300000, 1717243300000, NULL, NULL, 0)"
+        "INSERT INTO messages VALUES ('m2', 'grp1', 'outgoing', 'Group msg', 1717243300000, 1717243300000, NULL, NULL, 0, 0)"
     )
     conn.execute(
-        "INSERT INTO messages VALUES ('m3', 'conv1', 'incoming', NULL, 1717243400000, 1717243400000, '+49222', NULL, 1)"
+        "INSERT INTO messages VALUES ('m3', 'conv1', 'incoming', NULL, 1717243400000, 1717243400000, '+49222', NULL, 1, NULL)"
     )
     conn.commit()
     conn.close()
@@ -93,6 +94,40 @@ def test_read_messages_from_plain_db(tmp_path):
     assert "Group msg" in bodies
     # message with no body but hasAttachments=1 should be included
     assert "" in bodies
+
+
+def test_read_messages_preserves_read_status(tmp_path):
+    """readStatus=0 → is_read=True, 1 → False, NULL → True (safe default)."""
+    db = _make_plain_db(tmp_path)
+    messages = _read_messages_from_plain_db(db)
+    by_id = {m.id: m for m in messages}
+    # m1: readStatus=1 → unread
+    assert by_id["desktop_m1"].is_read is False
+    # m2: readStatus=0 → read
+    assert by_id["desktop_m2"].is_read is True
+    # m3: readStatus=NULL → default to read
+    assert by_id["desktop_m3"].is_read is True
+
+
+def test_read_messages_without_readstatus_column(tmp_path):
+    """DB without readStatus column defaults all messages to read."""
+    db_path = tmp_path / "noread.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, e164 TEXT, groupId TEXT)")
+    conn.execute("""CREATE TABLE messages (
+        id TEXT PRIMARY KEY, conversationId TEXT, type TEXT, body TEXT,
+        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER
+    )""")
+    conn.execute("INSERT INTO conversations VALUES ('c1', '+1', NULL)")
+    conn.execute("INSERT INTO messages VALUES ('x', 'c1', 'incoming', 'hi', 1000000, 1000000, '+2', NULL, 0)")
+    conn.commit()
+    conn.close()
+
+    from signal_mcp.desktop import _read_messages_from_plain_db
+    msgs = _read_messages_from_plain_db(db_path)
+    assert len(msgs) == 1
+    # Without readStatus column, default to read (safe fallback)
+    assert msgs[0].is_read is True
 
 
 def test_read_messages_outgoing_sender(tmp_path):
@@ -527,13 +562,14 @@ def test_read_messages_skips_zero_timestamp(tmp_path):
     conn.execute("""CREATE TABLE conversations (id TEXT PRIMARY KEY, e164 TEXT, groupId TEXT)""")
     conn.execute("""CREATE TABLE messages (
         id TEXT PRIMARY KEY, conversationId TEXT, type TEXT, body TEXT,
-        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER
+        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER,
+            readStatus INTEGER
     )""")
     conn.execute("INSERT INTO conversations VALUES ('c1', '+1', NULL)")
     # Row with zero timestamps — must be skipped
-    conn.execute("INSERT INTO messages VALUES ('z1', 'c1', 'incoming', 'zeroed', 0, 0, '+2', NULL, 0)")
+    conn.execute("INSERT INTO messages VALUES ('z1', 'c1', 'incoming', 'zeroed', 0, 0, '+2', NULL, 0, 1)")
     # Normal row
-    conn.execute("INSERT INTO messages VALUES ('n1', 'c1', 'incoming', 'normal', 1700000000000, 1700000000000, '+2', NULL, 0)")
+    conn.execute("INSERT INTO messages VALUES ('n1', 'c1', 'incoming', 'normal', 1700000000000, 1700000000000, '+2', NULL, 0, 1)")
     conn.commit()
     conn.close()
 
@@ -726,11 +762,12 @@ def test_read_messages_since_ms_filter(tmp_path):
     conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, e164 TEXT, groupId TEXT)")
     conn.execute("""CREATE TABLE messages (
         id TEXT PRIMARY KEY, conversationId TEXT, type TEXT, body TEXT,
-        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER
+        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER,
+            readStatus INTEGER
     )""")
     conn.execute("INSERT INTO conversations VALUES ('c1', '+1', NULL)")
-    conn.execute("INSERT INTO messages VALUES ('old', 'c1', 'incoming', 'old message', 1000000, 1000000, '+2', NULL, 0)")
-    conn.execute("INSERT INTO messages VALUES ('new', 'c1', 'incoming', 'new message', 9000000, 9000000, '+2', NULL, 0)")
+    conn.execute("INSERT INTO messages VALUES ('old', 'c1', 'incoming', 'old message', 1000000, 1000000, '+2', NULL, 0, 1)")
+    conn.execute("INSERT INTO messages VALUES ('new', 'c1', 'incoming', 'new message', 9000000, 9000000, '+2', NULL, 0, 1)")
     conn.commit()
     conn.close()
 
@@ -747,11 +784,12 @@ def test_read_messages_since_ms_zero_returns_all(tmp_path):
     conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, e164 TEXT, groupId TEXT)")
     conn.execute("""CREATE TABLE messages (
         id TEXT PRIMARY KEY, conversationId TEXT, type TEXT, body TEXT,
-        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER
+        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER,
+            readStatus INTEGER
     )""")
     conn.execute("INSERT INTO conversations VALUES ('c1', '+1', NULL)")
-    conn.execute("INSERT INTO messages VALUES ('a', 'c1', 'incoming', 'first', 1000000, 1000000, '+2', NULL, 0)")
-    conn.execute("INSERT INTO messages VALUES ('b', 'c1', 'incoming', 'second', 9000000, 9000000, '+2', NULL, 0)")
+    conn.execute("INSERT INTO messages VALUES ('a', 'c1', 'incoming', 'first', 1000000, 1000000, '+2', NULL, 0, 1)")
+    conn.execute("INSERT INTO messages VALUES ('b', 'c1', 'incoming', 'second', 9000000, 9000000, '+2', NULL, 0, 1)")
     conn.commit()
     conn.close()
 
@@ -1049,12 +1087,13 @@ def test_read_messages_zero_timestamp_after_since_filter(tmp_path):
     conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY, e164 TEXT, groupId TEXT)")
     conn.execute("""CREATE TABLE messages (
         id TEXT PRIMARY KEY, conversationId TEXT, type TEXT, body TEXT,
-        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER
+        sent_at INTEGER, received_at INTEGER, source TEXT, sourceUuid TEXT, hasAttachments INTEGER,
+            readStatus INTEGER
     )""")
     # This row has both timestamps NULL — COALESCE → 0, which is not > 0, so normally filtered.
     # We use since_ms=-1 (negative) to let it through: COALESCE(NULL,NULL,0)=0 > -1 → True.
     conn.execute("INSERT INTO conversations VALUES ('c1', '+1', NULL)")
-    conn.execute("INSERT INTO messages VALUES ('zero', 'c1', 'incoming', 'body', NULL, NULL, '+2', NULL, 0)")
+    conn.execute("INSERT INTO messages VALUES ('zero', 'c1', 'incoming', 'body', NULL, NULL, '+2', NULL, 0, 1)")
     conn.commit()
     conn.close()
 

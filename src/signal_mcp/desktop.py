@@ -263,6 +263,13 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms:
         else:
             source_col = "NULL AS sourceUuid"
 
+        # readStatus column present in Signal Desktop schema v39+
+        # (renamed from "unread"). 1=read, 0=unread, NULL=unknown.
+        if "readStatus" in msg_cols:
+            read_col = "m.readStatus"
+        else:
+            read_col = "NULL AS readStatus"
+
         rows = conn.execute(
             f"""SELECT
                 m.id,
@@ -274,6 +281,7 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms:
                 m.source,
                 {source_col},
                 m.hasAttachments,
+                {read_col},
                 c.e164    AS conv_e164,
                 c.groupId AS conv_group_id
             FROM messages m
@@ -296,12 +304,18 @@ def _read_messages_from_plain_db(plain_db: Path, own_number: str = "", since_ms:
             else:
                 sender = row["source"] or row["sourceUuid"] or row["conv_e164"] or ""
 
+            # Signal Desktop: readStatus=0 means read, 1=unread, NULL=unknown
+            # Default unknown/old messages to read (safer than false unread counts)
+            read_status = row["readStatus"]
+            is_read = read_status == 0 if read_status is not None else True
+
             messages.append(Message(
                 id=f"desktop_{row['id']}",
                 sender=sender,
                 body=row["body"] or "",
                 timestamp=datetime.fromtimestamp(ts_ms / 1000),
                 group_id=_decode_group_id(row["conv_group_id"]),
+                is_read=is_read,
             ))
     finally:
         conn.close()
