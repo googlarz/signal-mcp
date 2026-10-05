@@ -18,6 +18,7 @@ from mcp.types import (
 
 from .client import SignalClient, SignalError
 from .config import check_signal_cli_version, is_service_installed
+from .tool_annotations import annotations_for
 from . import __version__, store as _store
 
 app = Server("signal-mcp", version=__version__)
@@ -1671,6 +1672,8 @@ TOOLS += [
         inputSchema={"type": "object", "properties": {}},
     ),
 ]
+
+TOOLS = [t.model_copy(update={"annotations": annotations_for(t.name)}) for t in TOOLS]
 
 _TOOL_NAMES = {t.name for t in TOOLS}
 
