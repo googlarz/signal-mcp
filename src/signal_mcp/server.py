@@ -244,9 +244,17 @@ TOOLS = [
         description=(
             "List all Signal groups this account belongs to, including group name, ID, members, and admin list. "
             "The group_id returned here is required for send_group_message, send_group_attachment, and update_group. "
+            "Each member includes their group 'label' (the tag shown next to their name, e.g. a child's name) when set. "
+            "Also returns, when non-empty: pending_members (invited), requesting_members (join requests awaiting approval), "
+            "banned, permission_* settings (EVERY_MEMBER/ONLY_ADMINS), message_expiration_time, is_terminated. "
             "Use update_group to modify a group, or leave_group to exit."
         ),
-        inputSchema={"type": "object", "properties": {}},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Optional: return only this group"},
+            },
+        },
     ),
     Tool(
         name="get_conversation",
@@ -495,6 +503,7 @@ TOOLS = [
                 "name": {"type": "string", "description": "Group name visible to all members"},
                 "members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) of initial members to invite"},
                 "description": {"type": "string", "description": "Optional group description shown in group info"},
+                "avatar": {"type": "string", "description": "Optional local image file path for the group avatar"},
             },
             "required": ["name", "members"],
         },
@@ -751,7 +760,10 @@ TOOLS = [
             "expiration_seconds sets the disappearing-messages timer (0 to disable). "
             "link_mode controls the invite link: 'enabled' (anyone with link can join), "
             "'enabled-with-approval' (admin must approve), 'disabled' (no link), "
-            "or 'reset' (generate a new link and invalidate the old one). "
+            "or 'reset' (same as reset_link=true). "
+            "member_label / member_label_emoji set ONLY YOUR OWN label in this group (the tag shown next to your name) — "
+            "it is impossible to set another member's label; each member sets their own. Any member can set their own label. "
+            "ban_members / unban_members manage the ban list; permission_* take 'every-member' or 'only-admins'. "
             "Changes are applied instantly and all members receive an update notification. "
             "You must be a group admin to change membership, admin list, or invite link. "
             "Use list_groups to get the group_id and confirm your admin status. "
@@ -769,6 +781,15 @@ TOOLS = [
                 "remove_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to demote from admin"},
                 "expiration_seconds": {"type": "integer", "description": "Disappearing message timer in seconds (0 to disable)"},
                 "link_mode": {"type": "string", "description": "Invite link mode: 'disabled', 'enabled', 'enabled-with-approval', or 'reset' to generate a new link"},
+                "reset_link": {"type": "boolean", "description": "Generate a new invite link, invalidating the old one"},
+                "avatar": {"type": "string", "description": "Local image file path for the new group avatar"},
+                "ban_members": {"type": "array", "items": {"type": "string"}, "description": "Members to ban from (re)joining the group"},
+                "unban_members": {"type": "array", "items": {"type": "string"}, "description": "Members to remove from the ban list"},
+                "permission_add_member": {"type": "string", "enum": ["every-member", "only-admins"], "description": "Who may add new members"},
+                "permission_edit_details": {"type": "string", "enum": ["every-member", "only-admins"], "description": "Who may edit group name, description, avatar, timer"},
+                "permission_send_messages": {"type": "string", "enum": ["every-member", "only-admins"], "description": "Who may send messages ('only-admins' = announcement group)"},
+                "member_label": {"type": "string", "description": "YOUR OWN member label in this group (not other members')"},
+                "member_label_emoji": {"type": "string", "description": "Emoji for YOUR OWN member label"},
             },
             "required": ["group_id"],
         },
@@ -779,14 +800,34 @@ TOOLS = [
             "Leave a Signal group. After leaving, you will no longer receive messages from the group "
             "and will be removed from the member list. Other members are notified that you left. "
             "This action is irreversible without being re-invited. "
+            "If you are the group's ONLY admin you must name a successor in 'admins', otherwise signal-cli refuses. "
             "Use list_groups to find the group_id."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Group ID to leave (get from list_groups)"},
+                "admins": {"type": "array", "items": {"type": "string"}, "description": "Members to make admin before leaving — required if you are the only admin"},
+                "delete": {"type": "boolean", "description": "Also delete all local group data after leaving"},
             },
             "required": ["group_id"],
+        },
+    ),
+    Tool(
+        name="terminate_group",
+        description=(
+            "DESTRUCTIVE AND IRREVERSIBLE: permanently terminate a Signal group FOR ALL MEMBERS. "
+            "Afterwards nobody can send messages or start calls in it, and it cannot be undone. "
+            "Requires admin privileges. To just exit a group yourself, use leave_group instead. "
+            "Requires confirm=true; only call after the user explicitly asked to end the group for everyone."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Group ID to terminate (get from list_groups)"},
+                "confirm": {"type": "boolean", "description": "Must be true to proceed — prevents accidental termination"},
+            },
+            "required": ["group_id", "confirm"],
         },
     ),
     Tool(
@@ -1575,6 +1616,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             "send_read_receipt":    ["sender", "timestamps"],
             "update_group":         ["group_id"],
             "leave_group":          ["group_id"],
+            "terminate_group":      ["group_id", "confirm"],
             "set_expiration_timer": ["expiration_seconds"],
             "trust_identity":       ["number"],
             "get_attachment":       ["filename"],
@@ -1696,7 +1738,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok([c.to_dict() for c in contacts])
 
         elif name == "list_groups":
-            groups = await client.list_groups()
+            groups = await client.list_groups(group_id=arguments.get("group_id"))
             return _ok([g.to_dict() for g in groups])
 
         elif name == "get_conversation":
@@ -1817,6 +1859,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
                 arguments["name"],
                 arguments["members"],
                 description=arguments.get("description"),
+                avatar_path=arguments.get("avatar"),
             )
             return _ok({"status": "group created", **result})
 
@@ -1914,12 +1957,31 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
                 add_admins=arguments.get("add_admins"),
                 remove_admins=arguments.get("remove_admins"),
                 link_mode=arguments.get("link_mode"),
+                avatar_path=arguments.get("avatar"),
+                ban_members=arguments.get("ban_members"),
+                unban_members=arguments.get("unban_members"),
+                reset_link=arguments.get("reset_link") is True,
+                permission_add_member=arguments.get("permission_add_member"),
+                permission_edit_details=arguments.get("permission_edit_details"),
+                permission_send_messages=arguments.get("permission_send_messages"),
+                member_label=arguments.get("member_label"),
+                member_label_emoji=arguments.get("member_label_emoji"),
             )
             return _ok({"status": "group updated", "group_id": arguments["group_id"]})
 
         elif name == "leave_group":
-            await client.leave_group(arguments["group_id"])
+            await client.leave_group(
+                arguments["group_id"],
+                admins=arguments.get("admins"),
+                delete=arguments.get("delete") is True,
+            )
             return _ok({"status": "left group", "group_id": arguments["group_id"]})
+
+        elif name == "terminate_group":
+            if arguments.get("confirm") is not True:
+                return _err("confirm must be true to terminate the group for all members")
+            await client.terminate_group(arguments["group_id"])
+            return _ok({"status": "group terminated", "group_id": arguments["group_id"]})
 
         elif name == "pin_message":
             if not arguments.get("recipient") and not arguments.get("group_id"):

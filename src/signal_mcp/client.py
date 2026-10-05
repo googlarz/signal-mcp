@@ -55,6 +55,13 @@ def _validate_e164(number: str) -> None:
         )
 
 
+def _resolve_send_path(path: str) -> str:
+    try:
+        return str(validate_send_path(path))
+    except ValueError as e:
+        raise SignalError(str(e)) from e
+
+
 _SIGNAL_ERROR_HINTS: list[tuple[str, str]] = [
     ("untrusted identity", "The contact's device may have changed. Use trust_identity to resolve."),
     ("unverified identity", "The contact's device may have changed. Use trust_identity to resolve."),
@@ -918,31 +925,44 @@ class SignalClient:
 
     # ── Groups ────────────────────────────────────────────────────────────────
 
-    async def list_groups(self) -> list[Group]:
-        result = await self._rpc("listGroups")
+    async def list_groups(self, group_id: str | None = None) -> list[Group]:
+        result = await self._rpc("listGroups", {"groupId": [group_id]} if group_id else None)
         if not isinstance(result, list):
             raise SignalError(f"listGroups returned unexpected result: {result!r}")
-        groups = []
-        for g in result:
-            members = [
+
+        def _members(raw: list) -> list[GroupMember]:
+            return [
                 GroupMember(
                     uuid=m.get("uuid", ""),
                     number=m.get("number"),
                     is_admin=m.get("isAdmin", False),
+                    label=m.get("label") or None,
+                    label_emoji=m.get("labelEmoji") or None,
                 )
-                for m in g.get("members", [])
+                for m in raw or []
                 if m.get("uuid")
             ]
+
+        groups = []
+        for g in result:
             admin_uuids = [a.get("uuid", "") for a in g.get("admins", [])]
             groups.append(Group(
                 id=g.get("id") or "",
                 name=g.get("name") or "",
-                members=members,
+                members=_members(g.get("members", [])),
                 description=g.get("description") or None,
                 is_blocked=g.get("isBlocked", False),
                 is_member=g.get("isMember", True),
                 admins=admin_uuids,
                 invite_link=g.get("groupInviteLink") or None,
+                pending_members=_members(g.get("pendingMembers", [])),
+                requesting_members=_members(g.get("requestingMembers", [])),
+                banned=_members(g.get("banned", [])),
+                permission_add_member=g.get("permissionAddMember"),
+                permission_edit_details=g.get("permissionEditDetails"),
+                permission_send_message=g.get("permissionSendMessage"),
+                message_expiration_time=g.get("messageExpirationTime") or 0,
+                is_terminated=g.get("isTerminated", False),
             ))
         return groups
 
@@ -951,11 +971,14 @@ class SignalClient:
         name: str,
         members: list[str],
         description: str | None = None,
+        avatar_path: str | None = None,
     ) -> dict:
         """Create a new Signal group. Returns the new group info."""
         params: dict = {"name": name, "member": members}
         if description:
             params["description"] = description
+        if avatar_path is not None:
+            params["avatar"] = _resolve_send_path(avatar_path)
         result = await self._rpc("updateGroup", params)
         if not isinstance(result, dict):
             raise SignalError(f"updateGroup returned unexpected result: {result!r}")
@@ -972,8 +995,20 @@ class SignalClient:
         add_admins: list[str] | None = None,
         remove_admins: list[str] | None = None,
         link_mode: str | None = None,
+        avatar_path: str | None = None,
+        ban_members: list[str] | None = None,
+        unban_members: list[str] | None = None,
+        reset_link: bool = False,
+        permission_add_member: str | None = None,
+        permission_edit_details: str | None = None,
+        permission_send_messages: str | None = None,
+        member_label: str | None = None,
+        member_label_emoji: str | None = None,
     ) -> None:
-        """Update group properties (name, description, members, admins, expiry timer, invite link)."""
+        """Update group properties (name, description, members, admins, expiry timer, invite link).
+
+        member_label/member_label_emoji set the CALLING account's own label in the group only.
+        """
         params: dict = {"groupId": group_id}
         if name is not None:
             params["name"] = name
@@ -989,9 +1024,31 @@ class SignalClient:
             params["admin"] = add_admins
         if remove_admins:
             params["removeAdmin"] = remove_admins
-        if link_mode is not None:
-            # Values: "disabled", "enabled", "enabled-with-approval", "reset"
+        if link_mode == "reset":
+            # signal-cli's --link has no "reset" choice; resetting is the separate --reset-link flag
+            reset_link = True
+        elif link_mode is not None:
+            # Values: "disabled", "enabled", "enabled-with-approval"
             params["link"] = link_mode
+        if reset_link:
+            params["resetLink"] = True
+        if avatar_path is not None:
+            params["avatar"] = _resolve_send_path(avatar_path)
+        if ban_members:
+            params["ban"] = ban_members
+        if unban_members:
+            params["unban"] = unban_members
+        # Values: "every-member", "only-admins"
+        if permission_add_member is not None:
+            params["setPermissionAddMember"] = permission_add_member
+        if permission_edit_details is not None:
+            params["setPermissionEditDetails"] = permission_edit_details
+        if permission_send_messages is not None:
+            params["setPermissionSendMessages"] = permission_send_messages
+        if member_label is not None:
+            params["memberLabel"] = member_label
+        if member_label_emoji is not None:
+            params["memberLabelEmoji"] = member_label_emoji
         await self._rpc("updateGroup", params)
 
     async def join_group(self, uri: str) -> dict:
@@ -1273,8 +1330,19 @@ class SignalClient:
             "name": name,
         })
 
-    async def leave_group(self, group_id: str) -> None:
-        await self._rpc("quitGroup", {"groupId": group_id})
+    async def leave_group(
+        self, group_id: str, admins: list[str] | None = None, delete: bool = False
+    ) -> None:
+        params: dict = {"groupId": group_id}
+        if admins:
+            params["admin"] = admins
+        if delete:
+            params["delete"] = True
+        await self._rpc("quitGroup", params)
+
+    async def terminate_group(self, group_id: str) -> None:
+        """Permanently end a group for all members (admin only, irreversible)."""
+        await self._rpc("terminateGroup", {"groupId": group_id})
 
     async def pin_message(
         self,

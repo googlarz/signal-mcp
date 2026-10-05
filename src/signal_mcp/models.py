@@ -101,6 +101,16 @@ class GroupMember:
     uuid: str
     number: str | None = None
     is_admin: bool = False
+    label: str | None = None
+    label_emoji: str | None = None
+
+    def to_dict(self) -> dict:
+        d: dict = {"uuid": self.uuid, "number": self.number, "is_admin": self.is_admin}
+        if self.label:
+            d["label"] = self.label
+        if self.label_emoji:
+            d["label_emoji"] = self.label_emoji
+        return d
 
 
 @dataclass
@@ -113,25 +123,48 @@ class Group:
     is_member: bool = True
     admins: list[str] = field(default_factory=list)  # uuids
     invite_link: str | None = None
+    # pending = invited, not yet accepted; requesting = join requests awaiting admin approval
+    pending_members: list[GroupMember] = field(default_factory=list)
+    requesting_members: list[GroupMember] = field(default_factory=list)
+    banned: list[GroupMember] = field(default_factory=list)
+    permission_add_member: str | None = None
+    permission_edit_details: str | None = None
+    permission_send_message: str | None = None
+    message_expiration_time: int = 0
+    is_terminated: bool = False
 
     @property
     def member_count(self) -> int:
         return len(self.members)
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
             "member_count": self.member_count,
-            "members": [
-                {"uuid": m.uuid, "number": m.number, "is_admin": m.is_admin}
-                for m in self.members
-            ],
+            "members": [m.to_dict() for m in self.members],
             "is_blocked": self.is_blocked,
             "is_member": self.is_member,
             "invite_link": self.invite_link,
         }
+        for key, people in (
+            ("pending_members", self.pending_members),
+            ("requesting_members", self.requesting_members),
+            ("banned", self.banned),
+        ):
+            if people:
+                d[key] = [{"uuid": m.uuid, "number": m.number} for m in people]
+        for key, value in (
+            ("permission_add_member", self.permission_add_member),
+            ("permission_edit_details", self.permission_edit_details),
+            ("permission_send_message", self.permission_send_message),
+            ("message_expiration_time", self.message_expiration_time),
+            ("is_terminated", self.is_terminated),
+        ):
+            if value:
+                d[key] = value
+        return d
 
 
 @dataclass
