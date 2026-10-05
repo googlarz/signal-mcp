@@ -638,9 +638,9 @@ async def test_missing_required_param_returns_error():
 
 @pytest.mark.asyncio
 async def test_missing_multiple_required_params():
-    result = await call_tool("send_message", {})
+    result = await call_tool("send_sticker", {})
     assert "recipient" in result[0].text
-    assert "message" in result[0].text
+    assert "pack_id" in result[0].text
 
 
 # ── Configuration tools ────────────────────────────────────────────────────────

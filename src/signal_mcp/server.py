@@ -87,6 +87,46 @@ def _paging(arguments: dict, default_limit: int = 50, max_limit: int = 500) -> t
 
 # ── Tool definitions ───────────────────────────────────────────────────────────
 
+_QUOTE_PROPS = {
+    "quote_author": {"type": "string", "description": "Phone number (E.164) of the author of the message being quoted/replied to"},
+    "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to (from get_conversation)"},
+    "quote_message": {"type": "string", "description": "Text of the quoted message shown in the quote bubble. Default: looked up in the local store by quote_author + quote_timestamp"},
+    "quote_mentions": {
+        "type": "array",
+        "description": "@mentions inside the quoted text, same shape as mentions: {start, length, author}",
+        "items": {"type": "object", "properties": {
+            "start": {"type": "integer"}, "length": {"type": "integer"}, "author": {"type": "string"},
+        }},
+    },
+    "quote_text_styles": {"type": "array", "items": {"type": "string"}, "description": "Styles inside the quoted text as 'start:length:STYLE' (BOLD, ITALIC, SPOILER, STRIKETHROUGH, MONOSPACE)"},
+    "quote_attachments": {"type": "array", "items": {"type": "string"}, "description": "Attachments of the quoted message as 'contentType[:filename[:previewFile]]', e.g. 'image/png:photo.png'"},
+}
+_PREVIEW_PROPS = {
+    "preview_url": {"type": "string", "description": "URL for a link preview card; the same URL must also appear in the message text"},
+    "preview_title": {"type": "string", "description": "Link preview title (needed for the card to render)"},
+    "preview_description": {"type": "string", "description": "Link preview description"},
+    "preview_image": {"type": "string", "description": "Local image file for the link preview thumbnail"},
+}
+_STORY_REPLY_PROPS = {
+    "story_author": {"type": "string", "description": "Phone number of the story's author, to reply to a story"},
+    "story_timestamp": {"type": "integer", "description": "Timestamp of the story being replied to"},
+}
+_DELIVERY_PROPS = {
+    "no_urgent": {"type": "boolean", "description": "Send without the urgent flag, so the recipient gets no push notification", "default": False},
+    "notify_self": {"type": "boolean", "description": "If you are among the recipients, deliver as a normal (notifying) message instead of a silent sync message", "default": False},
+}
+_VOICE_NOTE_PROPS = {
+    "voice_note": {"type": "boolean", "description": "Mark audio attachments as voice notes (played inline in Signal)", "default": False},
+}
+_SEND_OPTION_KEYS = tuple({
+    **_QUOTE_PROPS, **_PREVIEW_PROPS, **_STORY_REPLY_PROPS, **_DELIVERY_PROPS, **_VOICE_NOTE_PROPS,
+})
+
+
+def _send_options(arguments: dict) -> dict:
+    return {k: arguments[k] for k in _SEND_OPTION_KEYS if k in arguments}
+
+
 TOOLS = [
     Tool(
         name="send_message",
@@ -94,17 +134,24 @@ TOOLS = [
             "Send a text message to a Signal contact. The message is delivered end-to-end encrypted. "
             "Returns the sent timestamp, which can be used as target_timestamp for react_to_message or edit_message. "
             "To reply/quote a specific message, provide quote_author and quote_timestamp (get timestamps from get_conversation). "
+            "Address the contact by recipient (phone number) or username — exactly one. "
+            "Optional: a link preview card (preview_*), a story reply (story_*), no_urgent to skip the push notification. "
+            "end_session=true instead resets the encrypted session with the contact (message is ignored; troubleshooting only). "
             "Use send_group_message for group chats, send_attachment for files/images."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format (e.g. +1234567890)"},
+                "username": {"type": "string", "description": "Signal username (e.g. alice.42) or username link, instead of recipient"},
                 "message": {"type": "string", "description": "Message text to send"},
-                "quote_author": {"type": "string", "description": "Phone number of the author of the message being quoted/replied to"},
-                "quote_timestamp": {"type": "integer", "description": "Timestamp of the message being quoted/replied to (from get_conversation)"},
+                **_QUOTE_PROPS,
+                **_PREVIEW_PROPS,
+                **_STORY_REPLY_PROPS,
+                **_DELIVERY_PROPS,
+                "end_session": {"type": "boolean", "description": "Reset the session with this contact instead of sending a message", "default": False},
             },
-            "required": ["recipient", "message"],
+            "required": ["message"],
         },
     ),
     Tool(
@@ -137,8 +184,10 @@ TOOLS = [
                         },
                     },
                 },
-                "quote_author": {"type": "string", "description": "Phone number (E.164) of the author of the message being quoted"},
-                "quote_timestamp": {"type": "integer", "description": "Timestamp of the quoted message (from get_conversation)"},
+                **_QUOTE_PROPS,
+                **_PREVIEW_PROPS,
+                **_STORY_REPLY_PROPS,
+                **_DELIVERY_PROPS,
             },
             "required": ["group_id", "message"],
         },
@@ -167,6 +216,9 @@ TOOLS = [
                 },
                 "quote_author": {"type": "string", "description": "Your own account number, to thread this note under a previous one"},
                 "quote_timestamp": {"type": "integer", "description": "Timestamp of the note being followed up on (from a prior send_note_to_self result)"},
+                **_PREVIEW_PROPS,
+                **_DELIVERY_PROPS,
+                **_VOICE_NOTE_PROPS,
             },
             "required": ["message"],
         },
@@ -206,6 +258,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "timeout": {"type": "integer", "description": "Seconds to wait for messages (default: 5)", "default": 5},
+                "max_messages": {"type": "integer", "description": "Return after this many messages (default: no limit)"},
             },
         },
     ),
@@ -221,6 +274,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "timeout": {"type": "integer", "description": "Seconds to wait for messages (default: 5)", "default": 5},
+                "max_messages": {"type": "integer", "description": "Return after this many messages (default: no limit)"},
+                "ignore_attachments": {"type": "boolean", "description": "Don't download attachments", "default": False},
+                "ignore_stories": {"type": "boolean", "description": "Don't receive story messages", "default": False},
+                "ignore_avatars": {"type": "boolean", "description": "Don't download avatars", "default": False},
+                "ignore_stickers": {"type": "boolean", "description": "Don't download sticker packs", "default": False},
             },
         },
     ),
@@ -310,12 +368,15 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
+                "username": {"type": "string", "description": "Signal username (e.g. alice.42) or username link, instead of recipient"},
                 "path": {"type": "string", "description": "Single file path (absolute, relative, or ~/path)"},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send as one message"},
                 "caption": {"type": "string", "description": "Optional caption text shown below the attachment", "default": ""},
                 "view_once": {"type": "boolean", "description": "Send as view-once media — recipient can only view it once before it disappears", "default": False},
+                **_VOICE_NOTE_PROPS,
+                **_QUOTE_PROPS,
+                **_DELIVERY_PROPS,
             },
-            "required": ["recipient"],
         },
     ),
     Tool(
@@ -340,6 +401,9 @@ TOOLS = [
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Multiple file paths to send as one message"},
                 "caption": {"type": "string", "description": "Optional caption text shown below the attachment", "default": ""},
                 "view_once": {"type": "boolean", "description": "Send as view-once media — each recipient can only view it once", "default": False},
+                **_VOICE_NOTE_PROPS,
+                **_QUOTE_PROPS,
+                **_DELIVERY_PROPS,
             },
             "required": ["group_id"],
         },
@@ -1278,6 +1342,23 @@ TOOLS += [
         },
     ),
     Tool(
+        name="send_story",
+        description=(
+            "Post an image or video as a Signal story — to My Story by default, or to a group's story with group_id. "
+            "Stories are visible to the audience for 24 hours. "
+            "Do NOT use to message someone — use send_message or send_attachment."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Image or video file to post"},
+                "group_id": {"type": "string", "description": "Post to this group's story instead of My Story (from list_groups)"},
+                "allow_replies": {"type": "boolean", "description": "Allow viewers to reply (default: true)", "default": True},
+            },
+            "required": ["path"],
+        },
+    ),
+    Tool(
         name="list_attachments",
         description=(
             "List all Signal attachments that have been downloaded and saved to the local store. "
@@ -1295,8 +1376,8 @@ TOOLS += [
         description=(
             "Retrieve metadata and the base64-encoded content of a locally saved Signal attachment by filename. "
             "Returns MIME type, file size, local path, and the raw bytes as base64 so the caller can read or display the file. "
-            "Only attachments already downloaded to the local store are accessible — "
-            "attachments expire on Signal's servers after ~30 days if not downloaded first. "
+            "If the file is not in the local attachments folder, it is fetched by attachment id from "
+            "signal-cli's own attachment store (only attachments signal-cli already downloaded) and saved locally. "
             "Use list_attachments to discover available filenames before calling. "
             "Use when you need to read, display, or forward the contents of a received file or image. "
             "Do NOT use to send an attachment — use send_attachment or send_group_attachment for that."
@@ -1304,7 +1385,7 @@ TOOLS += [
         inputSchema={
             "type": "object",
             "properties": {
-                "filename": {"type": "string", "description": "Attachment filename (get from list_attachments)"},
+                "filename": {"type": "string", "description": "Attachment filename (from list_attachments) or signal-cli attachment id"},
             },
             "required": ["filename"],
         },
@@ -1611,10 +1692,10 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
 
     # Required parameters, per tool (gives a clean error instead of KeyError)
     _REQUIRED: dict[str, list[str]] = {
-            "send_message":         ["recipient", "message"],
+            "send_message":         ["message"],
             "send_group_message":   ["group_id", "message"],
             "send_note_to_self":    ["message"],
-            "send_attachment":      ["recipient"],
+            "send_story":           ["path"],
             "send_group_attachment":["group_id"],
             "send_sticker":         ["recipient", "pack_id", "sticker_id"],
             "send_group_sticker":   ["group_id", "pack_id", "sticker_id"],
@@ -1671,9 +1752,10 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
 
         if name == "send_message":
             result = await client.send_message(
-                arguments["recipient"], arguments["message"],
-                quote_author=arguments.get("quote_author"),
-                quote_timestamp=arguments.get("quote_timestamp"),
+                arguments.get("recipient"), arguments["message"],
+                username=arguments.get("username"),
+                end_session=arguments.get("end_session", False),
+                **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp, "recipient": result.recipient})
 
@@ -1681,8 +1763,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             result = await client.send_group_message(
                 arguments["group_id"], arguments["message"],
                 mentions=arguments.get("mentions"),
-                quote_author=arguments.get("quote_author"),
-                quote_timestamp=arguments.get("quote_timestamp"),
+                **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp, "group_id": result.recipient})
 
@@ -1690,8 +1771,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             result = await client.send_note_to_self(
                 arguments["message"],
                 attachments=arguments.get("attachments"),
-                quote_author=arguments.get("quote_author"),
-                quote_timestamp=arguments.get("quote_timestamp"),
+                **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp})
 
@@ -1720,7 +1800,15 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok(await asyncio.to_thread(client.list_attachments))
 
         elif name == "get_attachment":
-            return _ok(await asyncio.to_thread(client.get_attachment, arguments["filename"]))
+            return _ok(await client.get_attachment(arguments["filename"]))
+
+        elif name == "send_story":
+            result = await client.send_story(
+                arguments["path"],
+                group_id=arguments.get("group_id"),
+                allow_replies=arguments.get("allow_replies", True),
+            )
+            return _ok({"status": "posted", "timestamp": result.timestamp})
 
         elif name == "receive_messages":
             await client._ensure_caches()
@@ -1729,7 +1817,9 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             except (TypeError, ValueError):
                 return _err("timeout must be an integer number of seconds")
             try:
-                messages = await client.receive_messages(timeout=timeout)
+                messages = await client.receive_messages(
+                    timeout=timeout, max_messages=arguments.get("max_messages"),
+                )
                 return _ok([client._enrich_message(m) for m in messages])
             except Exception as e:
                 if "already being received" in str(e):
@@ -1748,7 +1838,14 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
                 timeout = int(arguments.get("timeout", 5))
             except (TypeError, ValueError):
                 return _err("timeout must be an integer number of seconds")
-            messages = await client.receive_direct(timeout=timeout)
+            messages = await client.receive_direct(
+                timeout=timeout,
+                max_messages=arguments.get("max_messages"),
+                ignore_attachments=arguments.get("ignore_attachments", False),
+                ignore_stories=arguments.get("ignore_stories", False),
+                ignore_avatars=arguments.get("ignore_avatars", False),
+                ignore_stickers=arguments.get("ignore_stickers", False),
+            )
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "list_contacts":
@@ -1816,10 +1913,12 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             if not path_arg:
                 return _err("Either path or paths is required")
             result = await client.send_attachment(
-                arguments["recipient"],
+                arguments.get("recipient"),
                 path_arg,
                 caption=arguments.get("caption", ""),
                 view_once=arguments.get("view_once", False),
+                username=arguments.get("username"),
+                **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp})
 
@@ -1832,6 +1931,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
                 path_arg,
                 caption=arguments.get("caption", ""),
                 view_once=arguments.get("view_once", False),
+                **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp})
 

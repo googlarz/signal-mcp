@@ -332,6 +332,17 @@ def get_unread_messages(own_number: str = "", limit: int = 50) -> list[Message]:
         return _rows_to_messages(conn, list(reversed(rows)))
 
 
+def get_message_body(timestamp_ms: int, sender: str) -> str | None:
+    """Body of the stored message sent by *sender* at *timestamp_ms*, or None."""
+    init_db()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT body FROM messages WHERE timestamp = ? AND sender = ? LIMIT 1",
+            (timestamp_ms, sender),
+        ).fetchone()
+    return row["body"] if row else None
+
+
 def update_message_body(target_timestamp_ms: int, new_body: str, sender: str | None = None) -> None:
     """Update a stored message's body after an edit. Also syncs FTS index.
 
