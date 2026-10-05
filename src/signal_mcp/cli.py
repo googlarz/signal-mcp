@@ -54,16 +54,18 @@ def _send_flags(f):
 @cli.command()
 @click.argument("recipient")
 @click.argument("message")
+@click.option("--format", "formatting", is_flag=True,
+              help="Turn **bold**, *italic*, ~~strike~~, `mono` and ||spoiler|| into Signal formatting")
 @_send_flags
-def send(recipient: str, message: str, **options):
+def send(recipient: str, message: str, formatting: bool, **options):
     """Send a text message to RECIPIENT (E.164 phone number, or a username like alice.42)."""
     async def _run():
         async with SignalClient() as client:
             await client.ensure_daemon()
             if _E164_RE.match(recipient):
-                result = await client.send_message(recipient, message, **options)
+                result = await client.send_message(recipient, message, formatting=formatting, **options)
             else:
-                result = await client.send_message(None, message, username=recipient, **options)
+                result = await client.send_message(None, message, username=recipient, formatting=formatting, **options)
             click.echo(f"Sent (timestamp: {result.timestamp})")
     try:
         run(_run())

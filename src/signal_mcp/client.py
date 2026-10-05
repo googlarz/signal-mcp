@@ -559,6 +559,7 @@ class SignalClient:
         message: str,
         username: str | None = None,
         end_session: bool = False,
+        formatting: bool = False,
         **options,
     ) -> SendResult:
         target = _direct_target(recipient, username)
@@ -568,7 +569,13 @@ class SignalClient:
             result = await self._rpc("send", {**target, "endSession": True})
             ts = (result or {}).get("timestamp", int(time.time() * 1000))
             return SendResult(timestamp=ts, recipient=dest, success=True)
+        if formatting:
+            message, style_ranges = parse_styled_text(message)
+        else:
+            style_ranges = []
         params: dict = {**target, "message": message}
+        if style_ranges:
+            params["textStyle"] = style_ranges
         await self._apply_send_options(params, **options)
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))

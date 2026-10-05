@@ -167,3 +167,48 @@ def test_cli_send_group_format_flag():
         result = CliRunner().invoke(cli, ["send-group", "grp==", "**hi**", "--format"])
     assert result.exit_code == 0
     assert fake.send_group_message.call_args.kwargs["formatting"] is True
+
+
+# ── direct messages ───────────────────────────────────────────────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_direct_message_formatting_sends_plain_text_and_ranges(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 21})))
+    await client.send_message("+19999999999", "🎉 **Hi** *there*", formatting=True)
+    p = sent(route)["params"]
+    assert p["message"] == "🎉 Hi there"
+    assert p["textStyle"] == ["3:2:BOLD", "6:5:ITALIC"]  # emoji = 2 UTF-16 units
+    assert [m.body for m in _store_mod.get_conversation("+19999999999")] == ["🎉 Hi there"]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_direct_message_without_formatting_flag_is_untouched(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 22})))
+    await client.send_message("+19999999999", "**keep** `me`")
+    p = sent(route)["params"]
+    assert p["message"] == "**keep** `me`" and "textStyle" not in p
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_send_message_forwards_formatting(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 23})))
+    await call_tool("send_message", {"recipient": "+19999999999", "message": "~~old~~ new", "formatting": True})
+    assert sent(route)["params"]["message"] == "old new"
+    assert sent(route)["params"]["textStyle"] == ["0:3:STRIKETHROUGH"]
+    tool = next(t for t in _server_mod.TOOLS if t.name == "send_message")
+    assert tool.input_schema["properties"]["formatting"]["type"] == "boolean"
+
+
+def test_cli_send_format_flag():
+    fake = MagicMock()
+    fake.__aenter__ = AsyncMock(return_value=fake)
+    fake.__aexit__ = AsyncMock(return_value=False)
+    fake.ensure_daemon = AsyncMock()
+    fake.send_message = AsyncMock(return_value=SendResult(timestamp=1, recipient="+19999999999", success=True))
+    with patch("signal_mcp.cli.SignalClient", return_value=fake):
+        result = CliRunner().invoke(cli, ["send", "+19999999999", "**hi**", "--format"])
+    assert result.exit_code == 0
+    assert fake.send_message.call_args.kwargs["formatting"] is True

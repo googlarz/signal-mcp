@@ -136,6 +136,8 @@ TOOLS = [
             "To reply/quote a specific message, provide quote_author and quote_timestamp (get timestamps from get_conversation). "
             "Address the contact by recipient (phone number) or username — exactly one. "
             "Optional: a link preview card (preview_*), a story reply (story_*), no_urgent to skip the push notification. "
+            "Set formatting=true to turn **bold**, *italic*, ~~strikethrough~~, `monospace` and ||spoiler|| in the text into real "
+            "Signal formatting (markers are removed from the sent text); leave it off for text with literal asterisks or backticks. "
             "end_session=true instead resets the encrypted session with the contact (message is ignored; troubleshooting only). "
             "Use send_group_message for group chats, send_attachment for files/images."
         ),
@@ -145,6 +147,7 @@ TOOLS = [
                 "recipient": {"type": "string", "description": "Phone number in E.164 format (e.g. +1234567890)"},
                 "username": {"type": "string", "description": "Signal username (e.g. alice.42) or username link, instead of recipient"},
                 "message": {"type": "string", "description": "Message text to send"},
+                "formatting": {"type": "boolean", "description": "Convert **bold**, *italic*, ~~strikethrough~~, `monospace`, ||spoiler|| to Signal text formatting. Default false."},
                 **_QUOTE_PROPS,
                 **_PREVIEW_PROPS,
                 **_STORY_REPLY_PROPS,
@@ -1759,6 +1762,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
                 arguments.get("recipient"), arguments["message"],
                 username=arguments.get("username"),
                 end_session=arguments.get("end_session", False),
+                formatting=bool(arguments.get("formatting", False)),
                 **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp, "recipient": result.recipient})
