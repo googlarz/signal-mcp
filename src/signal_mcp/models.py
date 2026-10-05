@@ -31,9 +31,12 @@ class Message:
     expires_in_seconds: int | None = None  # disappearing message timer
     view_once: bool = False            # view-once message
     is_reaction: bool = False          # this is a reaction message (not stored)
+    # Optional incoming data (mentions, previews, polls, ...) keyed as in to_dict();
+    # persisted as one JSON column so new signal-cli fields never need a migration.
+    extras: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        return self.extras | {
             "id": self.id,
             "sender": self.sender,
             "recipient": self.recipient,

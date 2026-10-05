@@ -130,6 +130,114 @@ _group_cache_loaded: bool = False
 _group_cache_at: float = 0.0
 
 
+def _compact(d: dict) -> dict:
+    """Drop None/empty values so stored extras and tool output carry no noise."""
+    return {k: v for k, v in d.items() if v is not None and v is not False and v not in ("", [], {})}
+
+
+def _mentions(raw: list | None) -> list[dict]:
+    return [
+        _compact({"number": m.get("number"), "uuid": m.get("uuid"),
+                  "start": m.get("start", 0), "length": m.get("length", 0)})
+        for m in raw or []
+    ]
+
+
+def _target(d: dict) -> dict:
+    """Common shape of pin/unpin/adminDelete payloads (field names from signal-cli JSON)."""
+    return {
+        "target_author_number": d.get("targetAuthorNumber"),
+        "target_author_uuid": d.get("targetAuthorUuid"),
+        "target_timestamp": d.get("targetSentTimestamp"),
+    }
+
+
+def _parse_extras(dm: dict) -> dict:
+    """Map optional signal-cli JsonDataMessage fields to Message.extras (snake_case keys)."""
+    quote = dm.get("quote") or {}
+    sticker = dm.get("sticker") or {}
+    story = dm.get("storyContext") or {}
+    poll = dm.get("pollCreate") or {}
+    vote = dm.get("pollVote") or {}
+    pin = dm.get("pinMessage") or {}
+    call = dm.get("groupCallUpdate")
+    extras = {
+        "mentions": _mentions(dm.get("mentions")),
+        "text_styles": [
+            {"style": s.get("style"), "start": s.get("start", 0), "length": s.get("length", 0)}
+            for s in dm.get("textStyles") or []
+        ],
+        "previews": [
+            _compact({"url": p.get("url"), "title": p.get("title"),
+                      "description": p.get("description")})
+            for p in dm.get("previews") or []
+        ],
+        "quote": _compact({
+            "author_number": quote.get("authorNumber"),
+            "author_uuid": quote.get("authorUuid"),
+            "text": quote.get("text"),
+            "mentions": _mentions(quote.get("mentions")),
+            "attachments": [
+                _compact({"content_type": a.get("contentType"), "filename": a.get("filename")})
+                for a in quote.get("attachments") or []
+            ],
+        }),
+        "voice_note": any(a.get("isVoiceNote") for a in dm.get("attachments") or []),
+        "sticker": _compact({"pack_id": sticker.get("packId"),
+                             "sticker_id": sticker.get("stickerId")}),
+        # receipt is an opaque MobileCoin blob; only the human-readable note is useful
+        "payment": _compact({"note": (dm.get("payment") or {}).get("note")}),
+        "shared_contacts": [_shared_contact(c) for c in dm.get("contacts") or []],
+        "poll_create": _compact({"question": poll.get("question"),
+                                 "options": poll.get("options"),
+                                 "allow_multiple": poll.get("allowMultiple")}),
+        "poll_vote": _compact({"poll_author_number": vote.get("authorNumber"),
+                               "poll_author_uuid": vote.get("authorUuid"),
+                               "poll_timestamp": vote.get("targetSentTimestamp"),
+                               "option_indexes": vote.get("optionIndexes"),
+                               "vote_count": vote.get("voteCount")}),
+        "poll_terminate": _compact({
+            "poll_timestamp": (dm.get("pollTerminate") or {}).get("targetSentTimestamp")}),
+        "pin_message": _compact(_target(pin) | {"duration_seconds": pin.get("pinDurationSeconds")}),
+        "unpin_message": _compact(_target(dm.get("unpinMessage") or {})),
+        "story_context": _compact({"author_number": story.get("authorNumber"),
+                                   "author_uuid": story.get("authorUuid"),
+                                   "sent_timestamp": story.get("sentTimestamp")}),
+        "group_call_update": (_compact({"era_id": call.get("eraId")}) or True) if call else None,
+        "is_expiration_update": dm.get("isExpirationUpdate"),
+        "is_end_session": dm.get("isEndSession"),
+        "is_profile_key_update": dm.get("isProfileKeyUpdate"),
+    }
+    return _compact(extras)
+
+
+def _shared_contact(c: dict) -> dict:
+    name = c.get("name") or {}
+    display = " ".join(filter(None, [name.get("given"), name.get("middle"), name.get("family")]))
+    return _compact({
+        "name": display or name.get("nickname"),
+        "phones": [p.get("value") for p in c.get("phone") or [] if p.get("value")],
+        "emails": [e.get("value") for e in c.get("email") or [] if e.get("value")],
+        "organization": c.get("organization"),
+    })
+
+
+def _resolve_mentions(body: str, mentions: list[dict], name_of) -> str:
+    """Replace each mention placeholder (U+FFFC) with '@name'.
+
+    start/length are UTF-16 code units, so splice on the UTF-16 encoding: an emoji
+    before a mention is 2 units but 1 Python codepoint.
+    """
+    units = body.encode("utf-16-le")
+    for m in sorted(mentions, key=lambda m: m.get("start", 0), reverse=True):
+        start, end = 2 * m.get("start", 0), 2 * (m.get("start", 0) + m.get("length", 0))
+        if end > len(units):
+            continue
+        name = "@" + name_of(m.get("number") or m.get("uuid") or "")
+        units = units[:start] + name.encode("utf-16-le") + units[end:]
+    return units.decode("utf-16-le")
+
+
 _daemon_last_ok_at: float = 0.0   # monotonic timestamp of last confirmed-alive check
 _DAEMON_OK_TTL: float = 5.0       # skip HTTP ping if daemon was healthy within this window
 
@@ -618,6 +726,8 @@ class SignalClient:
                         _store.update_message_body, target_ts, new_body, edit_sender or None
                     )
                 continue
+            if await self._apply_delete(envelope):
+                continue
 
             msg = self._parse_envelope(envelope)
             if msg:
@@ -625,6 +735,34 @@ class SignalClient:
                     await asyncio.to_thread(_store.save_message, msg)
                 messages.append(msg)
         return messages
+
+    async def _apply_delete(self, envelope: dict) -> bool:
+        """Flag the stored target of a remoteDelete/adminDelete. True if envelope was one.
+
+        The body is kept: the store is the owner's local archive and a delete-for-everyone
+        must not silently destroy it; the flag lets tools show the message as deleted.
+        """
+        data = envelope.get("envelope", envelope)
+        dm = data.get("dataMessage")
+        senders = [data.get("source"), data.get("sourceNumber"), data.get("sourceUuid")]
+        if not dm:
+            dm = (data.get("syncMessage") or {}).get("sentMessage")
+            senders = [self.account]
+        dm = dm or {}
+        if remote := dm.get("remoteDelete"):
+            await asyncio.to_thread(
+                _store.mark_deleted, remote.get("timestamp"), senders, {"remote_deleted": True}
+            )
+            return True
+        if admin := dm.get("adminDelete"):
+            await asyncio.to_thread(
+                _store.mark_deleted,
+                admin.get("targetSentTimestamp"),
+                [admin.get("targetAuthorNumber"), admin.get("targetAuthorUuid")],
+                {"admin_deleted_by": next((s for s in senders if s), "")},
+            )
+            return True
+        return False
 
     async def receive_direct(self, timeout: int = 5) -> list[Message]:
         """Receive messages by calling signal-cli directly (no daemon).
@@ -662,6 +800,8 @@ class SignalClient:
                 envelope = _json.loads(line)
             except _json.JSONDecodeError:
                 continue
+            if await self._apply_delete(envelope):
+                continue
             msg = self._parse_envelope(envelope)
             if msg:
                 if not msg.receipt_type:
@@ -694,8 +834,8 @@ class SignalClient:
         sync = data.get("syncMessage")
         if sync:
             sent = sync.get("sentMessage")
-            if not sent:
-                return None  # read/delivered sync — not a message we store
+            if not sent or sent.get("remoteDelete") or sent.get("adminDelete"):
+                return None  # read/delivered sync or a delete — not a message we store
             data_message = sent
             sender = self.account  # it was sent by us
             ts_ms = sent.get("timestamp", ts_ms)
@@ -712,14 +852,17 @@ class SignalClient:
                 group_id=data_message.get("groupInfo", {}).get("groupId"),
                 quote_id=str(quote["id"]) if quote.get("id") else None,
                 is_read=True,  # sent by us, already "read"
+                extras=_parse_extras(data_message),
             )
 
         data_message = data.get("dataMessage")
         if not data_message:
             return None
 
-        # Reaction envelopes: someone reacted to a message — don't store as text
-        if data_message.get("reaction"):
+        # Reaction envelopes: someone reacted to a message — don't store as text.
+        # Deletes are applied to their target message by the receive loops instead.
+        if (data_message.get("reaction") or data_message.get("remoteDelete")
+                or data_message.get("adminDelete")):
             return None
 
         attachments = self._parse_attachments(data_message)
@@ -735,6 +878,7 @@ class SignalClient:
             quote_id=str(quote["id"]) if quote.get("id") else None,
             expires_in_seconds=data_message.get("expiresInSeconds") or None,
             view_once=bool(data_message.get("viewOnce", False)),
+            extras=_parse_extras(data_message),
         )
 
     def _parse_attachments(self, data_message: dict) -> list[Attachment]:
@@ -839,6 +983,12 @@ class SignalClient:
             d["recipient_name"] = self.resolve_name(msg.recipient)
         if msg.group_id:
             d["group_name"] = self.resolve_group_name(msg.group_id)
+        if mentions := msg.extras.get("mentions"):
+            d["mentions"] = [
+                m | {"name": self.resolve_name(m.get("number") or m.get("uuid") or "")}
+                for m in mentions
+            ]
+            d["body_resolved"] = _resolve_mentions(msg.body, mentions, self.resolve_name)
         return d
 
     # ── Contacts ──────────────────────────────────────────────────────────────
