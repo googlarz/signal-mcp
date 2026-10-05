@@ -246,7 +246,7 @@ Start with `signal-mcp doctor` — it checks signal-cli, your linked account, th
 | Tool | Description |
 |---|---|
 | `send_message` | Send a text message to a contact (by number, or by Signal `username`). Supports quoted replies (quoted text is filled in from your local store), link previews, `no_urgent`, `notify_self`, `end_session`, and story replies. |
-| `send_group_message` | Send a text message to a group. Supports quoted replies, `@mentions`, and link previews. |
+| `send_group_message` | Send a text message to a group. Supports quoted replies, `@mentions`, link previews, and — with `formatting: true` — real Signal formatting from `**bold**`, `*italic*`, `~~strike~~`, `` `mono` `` and `\|\|spoiler\|\|` (mention offsets are adjusted for you). |
 | `send_attachment` | Send a file or image to a contact. Supports captions, view-once and `voice_note`. |
 | `send_group_attachment` | Send a file or image to a group. Supports captions, view-once and `voice_note`. |
 | `send_note_to_self` | Save a note to yourself (Signal's saved messages). |
@@ -391,6 +391,7 @@ signal-mcp stop                            # stop the daemon
 # Send & receive
 signal-mcp send +1234567890 "Hello!"
 signal-mcp send-group <group_id> "Hey!"
+signal-mcp send-group <group_id> "**Kickoff** is at *11:00*" --format   # bold + italic
 signal-mcp note "Remember to buy milk"     # save a note to yourself
 signal-mcp receive                         # poll once
 signal-mcp receive --watch                 # keep watching (saves to store)

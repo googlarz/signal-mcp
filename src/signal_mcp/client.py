@@ -31,7 +31,7 @@ from .config import (
     save_daemon_pid,
     validate_send_path,
 )
-from .formatting import parse_styled_text
+from .formatting import parse_styled_text, parse_styled_text_mapped
 from .models import Attachment, Contact, Group, GroupMember, Message, SendResult
 from . import store as _store
 
@@ -588,10 +588,26 @@ class SignalClient:
         group_id: str,
         message: str,
         mentions: list[dict] | None = None,
+        formatting: bool = False,
         **options,
     ) -> SendResult:
         await self._rate_limiter.acquire()
+        if formatting:
+            # Mention offsets were computed against the text as written (markers
+            # included); remap them to the plain text so every range stays inside it
+            # (Signal Android drops messages whose style/mention ranges don't fit).
+            message, style_ranges, remap = parse_styled_text_mapped(message)
+            if mentions:
+                mentions = [
+                    {**m, "start": remap(m["start"]),
+                     "length": remap(m["start"] + m["length"]) - remap(m["start"])}
+                    for m in mentions
+                ]
+        else:
+            style_ranges = []
         params: dict = {"groupId": group_id, "message": message}
+        if style_ranges:
+            params["textStyle"] = style_ranges
         if mentions:
             params["mention"] = _mention_strings(mentions)
         await self._apply_send_options(params, **options)

@@ -162,6 +162,9 @@ TOOLS = [
             "To @mention a member, include their name in the message text and pass a mentions list where each entry has "
             "start (character index of the mention in the text), length (character count), and author (E.164 phone number). "
             "start/length are UTF-16 code units, not Unicode codepoints — an emoji before the mention shifts the offset by 2, not 1. "
+            "Set formatting=true to turn **bold**, *italic*, ~~strikethrough~~, `monospace` and ||spoiler|| in the text into real Signal "
+            "formatting (markers are removed from the sent text); with it, mention offsets refer to the text as you wrote it, markers "
+            "included, and are adjusted for you. Leave it off for text that contains literal asterisks or backticks. "
             "To reply/quote a message, provide quote_author (sender's phone number) and quote_timestamp (from get_conversation). "
             "Use list_groups to get group_id values. "
             "Use send_group_attachment to send files or images to a group. "
@@ -172,6 +175,7 @@ TOOLS = [
             "properties": {
                 "group_id": {"type": "string", "description": "Group ID (from list_groups)"},
                 "message": {"type": "string", "description": "Message text to send"},
+                "formatting": {"type": "boolean", "description": "Convert **bold**, *italic*, ~~strikethrough~~, `monospace`, ||spoiler|| to Signal text formatting. Default false."},
                 "mentions": {
                     "type": "array",
                     "description": "List of @mentions. Each item: {start: offset of the mention in the message (UTF-16 code units, not codepoints), length: mention length (UTF-16 code units), author: E.164 phone number of the mentioned member}. Example: message='Hello @Alice', mentions=[{start:6,length:6,author:'+1234567890'}]",
@@ -1763,6 +1767,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             result = await client.send_group_message(
                 arguments["group_id"], arguments["message"],
                 mentions=arguments.get("mentions"),
+                formatting=bool(arguments.get("formatting", False)),
                 **_send_options(arguments),
             )
             return _ok({"status": "sent", "timestamp": result.timestamp, "group_id": result.recipient})

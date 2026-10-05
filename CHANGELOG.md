@@ -2,6 +2,12 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Formatting in group messages**: `send_group_message` takes `formatting: true` (CLI: `send-group --format`) and turns `**bold**`, `*italic*`, `~~strike~~`, `` `mono` `` and `||spoiler||` into real Signal formatting, same as notes. Off by default so text with literal asterisks or backticks is never changed behind your back. With it, `@mention` offsets refer to the text as written (markers included) and are remapped automatically; all style and mention ranges are guaranteed to stay inside the sent text, which Signal Android 8.15+ requires (it silently drops messages with out-of-range styles, signal-cli#2075).
+
 ## [1.41.0] — 2026-10-05
 
 ### Added

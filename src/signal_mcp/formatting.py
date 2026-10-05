@@ -36,23 +36,50 @@ def parse_styled_text(text: str) -> tuple[str, list[str]]:
 
     Markers don't nest; the first-matching marker wins for any given span.
     """
+    plain, ranges, _ = parse_styled_text_mapped(text)
+    return plain, ranges
+
+
+def parse_styled_text_mapped(text: str):
+    """Like parse_styled_text, plus a function mapping an offset in *text* (UTF-16 units,
+    markers included) to the matching offset in the returned plain text.
+
+    Needed when other ranges (e.g. @mentions) were computed against the text as written.
+    """
     out: list[str] = []
     ranges: list[str] = []
+    cuts: list[tuple[int, int]] = []  # (UTF-16 offset in the original, units removed there)
     cursor = 0
+    orig_pos = 0  # UTF-16 length of text[:cursor]
     out_len = 0  # running UTF-16 length of the plain-text output built so far
 
     for m in _MARKER_RE.finditer(text):
         literal = text[cursor : m.start()]
         out.append(literal)
-        out_len += _utf16_len(literal)
+        literal_len = _utf16_len(literal)
+        out_len += literal_len
+        orig_pos += literal_len
 
         style_idx = next(i for i, g in enumerate(m.groups()) if g is not None)
         inner = m.groups()[style_idx]
         out.append(inner)
         inner_len = _utf16_len(inner)
         ranges.append(f"{out_len}:{inner_len}:{_STYLES[style_idx]}")
+
+        open_len = m.start(style_idx + 1) - m.start()  # markers are ASCII: chars == UTF-16 units
+        close_len = m.end() - m.end(style_idx + 1)
+        cuts.append((orig_pos, open_len))
+        cuts.append((orig_pos + open_len + inner_len, close_len))
+        orig_pos += open_len + inner_len + close_len
+
         out_len += inner_len
         cursor = m.end()
 
     out.append(text[cursor:])
-    return "".join(out), ranges
+
+    def remap(offset: int) -> int:
+        # An offset inside a removed marker collapses onto the marker's boundary, so the
+        # result is never negative and never decreases as the offset grows.
+        return offset - sum(min(count, offset - pos) for pos, count in cuts if offset > pos)
+
+    return "".join(out), ranges, remap

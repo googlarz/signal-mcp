@@ -77,13 +77,15 @@ def send(recipient: str, message: str, **options):
 @cli.command("send-group")
 @click.argument("group_id")
 @click.argument("message")
+@click.option("--format", "formatting", is_flag=True,
+              help="Turn **bold**, *italic*, ~~strike~~, `mono` and ||spoiler|| into Signal formatting")
 @_send_flags
-def send_group(group_id: str, message: str, **options):
+def send_group(group_id: str, message: str, formatting: bool, **options):
     """Send a text message to GROUP_ID (use 'groups' command to list IDs)."""
     async def _run():
         async with SignalClient() as client:
             await client.ensure_daemon()
-            result = await client.send_group_message(group_id, message, **options)
+            result = await client.send_group_message(group_id, message, formatting=formatting, **options)
             click.echo(f"Sent (timestamp: {result.timestamp})")
     try:
         run(_run())
