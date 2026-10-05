@@ -293,10 +293,13 @@ TOOLS = [
     Tool(
         name="list_contacts",
         description=(
-            "List all Signal contacts known to this account, including names and phone numbers. "
-            "Use the optional search parameter to filter by name or number substring. "
-            "Returns contacts from signal-cli's local contact store. "
-            "Use get_profile to fetch the current Signal profile for a specific contact."
+            "List the contacts in signal-cli's local contact store (no network call). Use it to browse or audit contacts; "
+            "to look up one person's number by name, find_contact is the shorter call. Parameters: search (optional) keeps "
+            "only contacts whose number, name, given/family name, nickname or username contains it (case-insensitive); "
+            "all_recipients (default false) also includes people not in your address book, e.g. members of your groups; "
+            "blocked=true returns only blocked contacts, false only unblocked, omitted all. Returns a list of objects with "
+            "number (E.164), uuid, name, given_name, family_name, about, blocked, display_name, plus username, nick_name, "
+            "note, has_avatar, message_expiration_time etc. when set."
         ),
         inputSchema={
             "type": "object",
@@ -310,12 +313,14 @@ TOOLS = [
     Tool(
         name="list_groups",
         description=(
-            "List all Signal groups this account belongs to, including group name, ID, members, and admin list. "
-            "The group_id returned here is required for send_group_message, send_group_attachment, and update_group. "
-            "Each member includes their group 'label' (the tag shown next to their name, e.g. a child's name) when set. "
-            "Also returns, when non-empty: pending_members (invited), requesting_members (join requests awaiting approval), "
-            "banned, permission_* settings (EVERY_MEMBER/ONLY_ADMINS), message_expiration_time, is_terminated. "
-            "Use update_group to modify a group, or leave_group to exit."
+            "List the Signal groups this account knows, from signal-cli's local store (no network call). Call it first to "
+            "get the group_id that send_group_message, send_group_attachment, update_group, leave_group, terminate_group "
+            "and set_expiration_timer require, or to check your admin status. group_id (optional) returns only that group. "
+            "Each group has id, name, description, member_count, members (uuid, number, is_admin, and label/label_emoji — "
+            "the tag shown next to the name — when set), is_blocked, is_member and invite_link; when non-empty also "
+            "pending_members (invited), requesting_members (awaiting approval), banned, "
+            "permission_add_member/permission_edit_details/permission_send_message (EVERY_MEMBER or ONLY_ADMINS), "
+            "message_expiration_time (seconds) and is_terminated."
         ),
         inputSchema={
             "type": "object",
@@ -466,10 +471,12 @@ TOOLS = [
     Tool(
         name="get_profile",
         description=(
-            "Fetch the Signal profile for a contact, including their display name, about text, and avatar. "
-            "Profile data is fetched live from the Signal network (not local cache). "
-            "Use this to verify a contact's current name or check if they have a profile set up. "
-            "Use update_profile to update your own profile."
+            "Check one phone number against Signal's servers and return what that lookup provides. number (required, "
+            "E.164). Returns a contact object whose number and uuid (the Signal account id; null if the number is not "
+            "registered) are filled; the lookup carries no profile data, so name, given_name, family_name and about come "
+            "back null. For a contact's profile name and about text use find_contact or list_contacts with "
+            "all_recipients=true; for their photo use get_avatar; to check many numbers at once use get_user_status. To "
+            "change your own profile use update_profile."
         ),
         inputSchema={
             "type": "object",
@@ -482,18 +489,13 @@ TOOLS = [
     Tool(
         name="block_contact",
         description=(
-            "Block a Signal contact so they can no longer send you messages or call you. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "The block is applied locally via signal-cli and propagated to the Signal network. "
-            "The blocked contact receives NO notification — from their perspective, messages appear sent "
-            "but are silently discarded before reaching you; delivery receipts are suppressed. "
-            "Blocking does not delete existing message history; prior conversations remain in your local store. "
-            "The block persists across restarts and is reversible — call unblock_contact to lift it. "
-            "Use when you want to permanently stop receiving messages from a contact. "
-            "Use unblock_contact to reverse the block. "
-            "Do NOT use as a temporary mute — blocking hides the contact from normal message flow entirely. "
-            "Do NOT use to remove a contact from your list — use remove_contact for that."
+            "Block a contact so you stop receiving their messages and calls. number (required, E.164). Only works when "
+            "signal-mcp is the account's primary device — fails with 'This command doesn't work on linked devices' if "
+            "signal-mcp was set up via signal-cli link. The contact is not notified. The blocked list is synced to your "
+            "linked devices, and if you share no group with them your profile key is rotated so they lose access to your "
+            "profile updates. Message history is kept. Blocking an already blocked contact is a no-op. Reversible with "
+            "unblock_contact. To only delete the local contact entry without blocking, use remove_contact. Returns status "
+            "'blocked' and number."
         ),
         inputSchema={
             "type": "object",
@@ -506,11 +508,12 @@ TOOLS = [
     Tool(
         name="unblock_contact",
         description=(
-            "Unblock a previously blocked Signal contact, restoring their ability to send you messages and calls. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "The contact is NOT notified that they were unblocked. "
-            "Use block_contact to re-block, or list_contacts to see which contacts are blocked."
+            "Unblock a previously blocked contact so their messages and calls reach you again. number (required, E.164). "
+            "Only works when signal-mcp is the account's primary device — fails with 'This command doesn't work on linked "
+            "devices' if signal-mcp was set up via signal-cli link. The contact is not notified; unblocking also accepts "
+            "their message request (your profile is shared with them again) and syncs to your linked devices. Unblocking a "
+            "contact that is not blocked is a no-op. Use list_contacts with blocked=true to see who is blocked, "
+            "block_contact to block again. Returns status 'unblocked' and number."
         ),
         inputSchema={
             "type": "object",
@@ -523,13 +526,12 @@ TOOLS = [
     Tool(
         name="remove_contact",
         description=(
-            "Remove a contact from the local signal-cli contact list on this device. "
-            "This only removes the local record — it does NOT block the contact, delete message history, "
-            "or affect the contact's ability to message you. "
-            "To prevent incoming messages, use block_contact instead. "
-            "Set hide=true to only hide the contact from the list (data kept), or forget=true to delete "
-            "all data for the recipient including identity keys and sessions (mutually exclusive). "
-            "Use update_contact to set a local display name without removing."
+            "Delete a contact's entry (name, nickname, note) from your contact list; synced to your linked devices. It does"
+            " not block them, delete messages or stop them messaging you — use block_contact for that. number (required, "
+            "E.164). hide (default false): only hide the contact from the list and keep its data. forget (default false): "
+            "delete ALL data for this recipient, including identity keys and sessions — not reversible. hide and forget are"
+            " mutually exclusive (error if both). Returns status 'removed' and number. To rename instead, use "
+            "update_contact."
         ),
         inputSchema={
             "type": "object",
@@ -544,16 +546,13 @@ TOOLS = [
     Tool(
         name="update_profile",
         description=(
-            "Update your own Signal profile visible to all contacts. "
-            "name sets your display name shown to contacts who have not saved your number. "
-            "about sets the bio text shown on your profile page. "
-            "avatar_path sets a new profile photo from a local image file (JPEG or PNG). "
-            "Set remove_avatar=true to clear your current photo without setting a new one. "
-            "All parameters are optional — only include what you want to change. "
-            "Changes are propagated to the Signal network immediately. "
-            "Use get_profile to read a contact's current profile. "
-            "Do NOT use to rename a linked device — use update_device for that. "
-            "Do NOT use to change messaging settings — use update_configuration for that."
+            "Change your own Signal profile, which is uploaded to Signal's servers and seen by people you share your "
+            "profile with. Only the fields you pass change. name: display name (alias of given_name; given_name wins if "
+            "both are set). given_name / family_name: the two parts of your profile name. about: bio text; about_emoji: "
+            "emoji shown next to it. mobilecoin_address: base64-encoded MobileCoin public address. avatar_path: local image"
+            " file (JPEG or PNG) inside the allowed send folders (SIGNAL_MCP_SEND_ROOTS), no hidden paths. remove_avatar "
+            "(default false): clear the current photo. Returns status 'profile updated'. To label someone else locally use "
+            "update_contact; to rename a linked device use update_device; for account settings use update_account."
         ),
         inputSchema={
             "type": "object",
@@ -564,7 +563,7 @@ TOOLS = [
                 "about": {"type": "string", "description": "About/bio text"},
                 "about_emoji": {"type": "string", "description": "Emoji shown next to the about text"},
                 "mobilecoin_address": {"type": "string", "description": "MobileCoin address (base64)"},
-                "avatar_path": {"type": "string", "description": "Path to avatar image file"},
+                "avatar_path": {"type": "string", "description": "Local JPEG/PNG path inside the allowed send folders (SIGNAL_MCP_SEND_ROOTS)"},
                 "remove_avatar": {"type": "boolean", "description": "Remove current avatar", "default": False},
             },
         },
@@ -572,11 +571,12 @@ TOOLS = [
     Tool(
         name="create_group",
         description=(
-            "Create a new Signal group with specified members. "
-            "You are automatically added as the group admin. All listed members receive an invitation notification. "
-            "Returns the new group's ID and invite link. "
-            "Use update_group to modify the group after creation (name, description, members, link settings). "
-            "Use send_group_message to post messages to the group."
+            "Create a new Signal group with you as admin. name (required) is the group name shown to everyone; members "
+            "(required) is a list of E.164 phone numbers to add; description (optional) is the group info text; avatar "
+            "(optional) is a local image path, which must be inside the allowed send folders (SIGNAL_MCP_SEND_ROOTS). "
+            "Contacts Signal's servers and notifies every member; not idempotent — calling twice creates two groups. "
+            "Returns status, groupId (base64; use it as group_id elsewhere), timestamp and per-member send results. Use "
+            "update_group to change an existing group and send_group_message to post in it."
         ),
         inputSchema={
             "type": "object",
@@ -592,9 +592,12 @@ TOOLS = [
     Tool(
         name="join_group",
         description=(
-            "Join a Signal group using an invite link (https://signal.group/#...). "
-            "If the group requires admin approval, your join request will be pending until approved. "
-            "After joining, use list_groups to find the group_id for sending messages."
+            "Join a Signal group from an invite link. uri (required) is the link, https://signal.group/#... Use this for "
+            "groups you are not in; for groups you already belong to use list_groups. Contacts Signal's servers and "
+            "notifies the group. If the group requires admin approval you become a requesting member and the result has "
+            "onlyRequested=true (or the call fails with 'Pending admin approval'); an invalid or reset link fails with "
+            "'Group link is invalid'. Returns status, groupId, timestamp and send results; use the groupId as group_id for "
+            "send_group_message."
         ),
         inputSchema={
             "type": "object",
@@ -607,32 +610,28 @@ TOOLS = [
     Tool(
         name="list_devices",
         description=(
-            "List all devices currently linked to your Signal account, including the primary device and any linked secondaries. "
-            "Returns each device's ID, name, and last-seen timestamp. "
-            "Device ID 1 is always the primary device (your registered phone). "
-            "Use the returned device_id values with update_device (rename), remove_device (unlink). "
-            "Use when auditing which devices have access to your Signal account, "
-            "or to find the ID of a device you want to rename or remove."
+            "List all devices linked to your Signal account, queried from Signal's servers. Takes no parameters. Returns "
+            "entries with id, name, createdTimestamp and lastSeenTimestamp (epoch ms); device id 1 is the primary phone. "
+            "Use it to audit which devices have access, or to get the device id for update_device (rename) or remove_device"
+            " (unlink)."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="add_device",
         description=(
-            "Link a new secondary device to your Signal account using a device-link URI. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "The URI is generated on the new device by running 'signal-cli link' or by scanning the QR code "
-            "in Signal Desktop's Settings → Linked Devices → Link New Device. "
-            "After linking, the new device receives future messages but not historical ones. "
-            "Use list_devices to confirm the device was linked successfully. "
-            "Use remove_device to unlink a device you no longer use. "
-            "Do NOT share the device-link URI — it grants full Signal account access to whoever uses it."
+            "Link a new device (e.g. Signal Desktop or another signal-cli) to your account. uri (required): the device-link"
+            " URI (sgnl://linkdevice?...) shown by the new device as a QR code or printed by 'signal-cli link'. Only works "
+            "when signal-mcp is the account's primary device — fails with 'This command doesn't work on linked devices' if "
+            "signal-mcp was set up via signal-cli link. Also fails on a malformed or expired link or when the account "
+            "already has the maximum number of linked devices. The linked device gets full access to the account; never use"
+            " a URI from an untrusted source. Returns status 'device linked'; confirm with list_devices, undo with "
+            "remove_device."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "uri": {"type": "string", "description": "Device link URI (from signal-cli link output)"},
+                "uri": {"type": "string", "description": "Device link URI (sgnl://linkdevice?...) from the new device's QR code or signal-cli link output"},
             },
             "required": ["uri"],
         },
@@ -640,15 +639,11 @@ TOOLS = [
     Tool(
         name="remove_device",
         description=(
-            "Permanently unlink a secondary device from your Signal account. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "The device loses access to send and receive messages immediately. "
-            "device_id must be a secondary device (ID ≥ 2) — you cannot unlink your primary device. "
-            "The removed device is not notified; it simply stops receiving messages. "
-            "This action is irreversible — the device must re-link via add_device to regain access. "
-            "Use list_devices to find the device_id you want to remove. "
-            "Use update_device to rename a device without removing it."
+            "Permanently unlink a device from your Signal account; it immediately stops sending and receiving and can only "
+            "come back by linking again with add_device. device_id (required, integer from list_devices) must be a linked "
+            "device, not 1 (the primary). Only works when signal-mcp is the account's primary device — fails with 'This "
+            "command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. Returns status 'device "
+            "removed' and device_id. To only rename a device, use update_device."
         ),
         inputSchema={
             "type": "object",
@@ -710,14 +705,11 @@ TOOLS = [
     Tool(
         name="get_user_status",
         description=(
-            "Check whether one or more phone numbers or usernames are registered Signal users. "
-            "Queries Signal's servers for each number and returns a registered/unregistered status. "
-            "Accepts a list so you can batch-check multiple numbers in a single call. "
-            "Useful before sending to an unknown number to avoid 'unregistered user' delivery failures. "
-            "Note: privacy-mode accounts or numbers that have opted out of discoverability may show as unregistered "
-            "even if they actively use Signal. "
-            "Use before sending to a new contact to confirm they are reachable on Signal. "
-            "Do NOT use to look up contact profile details — use get_profile for that."
+            "Check whether phone numbers and/or usernames are registered on Signal, in one batch query to Signal's servers."
+            " recipients: list of E.164 phone numbers; usernames: list of Signal usernames or username links; at least one "
+            "of the two is required. Returns one entry per input with recipient, number or username, uuid (null if not "
+            "registered) and isRegistered. Use it before messaging an unknown number; numbers that hide their "
+            "discoverability can show as unregistered. For a contact's name or details use find_contact or get_profile."
         ),
         inputSchema={
             "type": "object",
@@ -738,12 +730,11 @@ TOOLS = [
     Tool(
         name="send_sync_request",
         description=(
-            "Request a full sync of messages, contacts, and groups from your primary Signal device to this linked device. "
-            "Signal's linked-device architecture stores history on the primary device; a sync pulls that data here. "
-            "Use when list_conversations shows no history, list_contacts returns fewer contacts than expected, "
-            "or list_groups is missing groups that exist on your phone. "
-            "The sync is asynchronous — data arrives in the background over the next few seconds. "
-            "Do NOT use to receive new incoming messages — use receive_messages for that."
+            "Ask your primary Signal device to send this linked device its contacts, groups and settings. Takes no "
+            "parameters. Use it when list_contacts or list_groups is missing entries that exist on your phone; it is meant "
+            "for linked setups. Asynchronous: the call returns status 'sync requested' at once and the data arrives over "
+            "the next seconds through the normal receive loop. It does not fetch new messages — use receive_messages for "
+            "that. To push your contacts the other way, use send_contacts_sync."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
@@ -817,15 +808,13 @@ TOOLS = [
     Tool(
         name="update_contact",
         description=(
-            "Set or update the local display name, nickname or note for a Signal contact "
-            "(at least one of name, given_name, family_name, nick_given_name, nick_family_name, note). "
-            "The name is stored only in signal-cli's local contact database — it is never sent to or visible by the contact. "
-            "Overrides the contact's own profile name in list_contacts and conversation displays. "
-            "Useful for adding a human-readable label to a number that has no Signal profile name. "
-            "Use list_contacts to see current names before updating. "
-            "Use when you want to assign or correct a contact's display name locally. "
-            "Do NOT use to change your own profile name — use update_profile for that. "
-            "Do NOT use to block or remove a contact — use block_contact or remove_contact for those."
+            "Set your private local name, nickname or note for another contact; it is synced to your own linked devices and"
+            " never shown to the contact. To change your own public profile use update_profile; to block or delete a "
+            "contact use block_contact or remove_contact. number (required, E.164). Pass at least one of: name (full "
+            "display name; stored as given name and clears the family name unless family_name is also given), given_name, "
+            "family_name, nick_given_name, nick_family_name (nickname shown instead of their profile name), note (private "
+            "note). Fails if none is given or the number is not registered on Signal. Returns status, number and name. For "
+            "a disappearing-message timer use set_expiration_timer."
         ),
         inputSchema={
             "type": "object",
@@ -844,38 +833,34 @@ TOOLS = [
     Tool(
         name="update_group",
         description=(
-            "Modify a Signal group's settings, membership, or permissions. "
-            "All parameters except group_id are optional — include only what you want to change. "
-            "add_members sends invitations; remove_members removes members immediately. "
-            "add_admins promotes members to admin; remove_admins demotes them. "
-            "expiration_seconds sets the disappearing-messages timer (0 to disable). "
-            "link_mode controls the invite link: 'enabled' (anyone with link can join), "
-            "'enabled-with-approval' (admin must approve), 'disabled' (no link), "
-            "or 'reset' (same as reset_link=true). "
-            "member_label / member_label_emoji set ONLY YOUR OWN label in this group (the tag shown next to your name) — "
-            "it is impossible to set another member's label; each member sets their own. Any member can set their own label. "
-            "ban_members / unban_members manage the ban list; permission_* take 'every-member' or 'only-admins'. "
-            "Changes are applied instantly and all members receive an update notification. "
-            "You must be a group admin to change membership, admin list, or invite link. "
-            "Use list_groups to get the group_id and confirm your admin status. "
-            "Do NOT use to send a message — use send_group_message for that."
+            "Change an existing group's details, membership, admins, invite link, permissions or timer; only the fields you"
+            " pass change. group_id (required, from list_groups). name, description: new text. avatar: local image path "
+            "inside the allowed send folders. add_members / remove_members / add_admins / remove_admins / ban_members / "
+            "unban_members: lists of E.164 numbers. expiration_seconds: disappearing-message timer, 0 disables. link_mode: "
+            "'enabled' (anyone with the link joins), 'enabled-with-approval', 'disabled', or 'reset' (same as "
+            "reset_link=true, which issues a new link and invalidates the old one). permission_add_member, "
+            "permission_edit_details, permission_send_messages: 'every-member' or 'only-admins' (only-admins sending = "
+            "announcement group). member_label / member_label_emoji set ONLY YOUR OWN label in this group (the tag next to "
+            "your name); you cannot set another member's label. Changes apply immediately and every member gets a group "
+            "update; removals and bans are not undone automatically. Admin rights are needed for most changes, depending on"
+            " the group's permissions. Returns status and group_id. Use send_group_message to post, leave_group to exit."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "group_id": {"type": "string", "description": "Group ID to update"},
+                "group_id": {"type": "string", "description": "Group ID to update (get from list_groups)"},
                 "name": {"type": "string", "description": "New group name"},
                 "description": {"type": "string", "description": "New group description"},
-                "add_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to add"},
-                "remove_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to remove"},
-                "add_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to promote to admin"},
-                "remove_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers to demote from admin"},
+                "add_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) to add"},
+                "remove_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) to remove"},
+                "add_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) to promote to admin"},
+                "remove_admins": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) to demote from admin"},
                 "expiration_seconds": {"type": "integer", "description": "Disappearing message timer in seconds (0 to disable)"},
                 "link_mode": {"type": "string", "description": "Invite link mode: 'disabled', 'enabled', 'enabled-with-approval', or 'reset' to generate a new link"},
                 "reset_link": {"type": "boolean", "description": "Generate a new invite link, invalidating the old one"},
-                "avatar": {"type": "string", "description": "Local image file path for the new group avatar"},
-                "ban_members": {"type": "array", "items": {"type": "string"}, "description": "Members to ban from (re)joining the group"},
-                "unban_members": {"type": "array", "items": {"type": "string"}, "description": "Members to remove from the ban list"},
+                "avatar": {"type": "string", "description": "Local image file path for the new group avatar (must be inside the allowed send folders)"},
+                "ban_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) to ban from (re)joining the group"},
+                "unban_members": {"type": "array", "items": {"type": "string"}, "description": "Phone numbers (E.164) to remove from the ban list"},
                 "permission_add_member": {"type": "string", "enum": ["every-member", "only-admins"], "description": "Who may add new members"},
                 "permission_edit_details": {"type": "string", "enum": ["every-member", "only-admins"], "description": "Who may edit group name, description, avatar, timer"},
                 "permission_send_messages": {"type": "string", "enum": ["every-member", "only-admins"], "description": "Who may send messages ('only-admins' = announcement group)"},
@@ -888,11 +873,12 @@ TOOLS = [
     Tool(
         name="leave_group",
         description=(
-            "Leave a Signal group. After leaving, you will no longer receive messages from the group "
-            "and will be removed from the member list. Other members are notified that you left. "
-            "This action is irreversible without being re-invited. "
-            "If you are the group's ONLY admin you must name a successor in 'admins', otherwise signal-cli refuses. "
-            "Use list_groups to find the group_id."
+            "Leave a Signal group yourself: sends a quit message to all members and removes you from the member list; the "
+            "group continues for everyone else. To end the group for all members use terminate_group instead. group_id "
+            "(required, from list_groups). admins: E.164 numbers of members to promote first — if you are the group's ONLY "
+            "admin you must name one, otherwise signal-cli refuses. delete (default false): also delete the group's local "
+            "data after leaving. You can only come back by being re-added or via an invite link. Returns status and "
+            "group_id."
         ),
         inputSchema={
             "type": "object",
@@ -907,10 +893,11 @@ TOOLS = [
     Tool(
         name="terminate_group",
         description=(
-            "DESTRUCTIVE AND IRREVERSIBLE: permanently terminate a Signal group FOR ALL MEMBERS. "
-            "Afterwards nobody can send messages or start calls in it, and it cannot be undone. "
-            "Requires admin privileges. To just exit a group yourself, use leave_group instead. "
-            "Requires confirm=true; only call after the user explicitly asked to end the group for everyone."
+            "DESTRUCTIVE AND IRREVERSIBLE: permanently terminate a Signal group FOR ALL MEMBERS; afterwards nobody can send"
+            " messages or start calls in it. Requires admin rights. To just exit the group yourself, use leave_group. "
+            "group_id (required, from list_groups). confirm (required) must be true, otherwise nothing happens and an error"
+            " is returned; only set it after the user explicitly asked to end the group for everyone. Returns status and "
+            "group_id."
         ),
         inputSchema={
             "type": "object",
@@ -987,27 +974,22 @@ TOOLS = [
     Tool(
         name="send_contacts_sync",
         description=(
-            "Push your local contacts list to all linked Signal devices (e.g., phone, desktop). "
-            "Useful when contacts added via signal-cli are not showing up on other devices. "
-            "This is a one-way sync from this device outward."
+            "Send your local contact list to your other linked devices as a sync message, one-way from this device outward."
+            " Takes no parameters. Use it when contacts added or renamed through signal-mcp do not appear on your phone or "
+            "desktop. Contacts no one else and changes nothing locally. Returns status 'contacts synced to linked devices'."
+            " To pull data from the primary device instead, use send_sync_request."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="update_device",
         description=(
-            "Rename a linked secondary device on your Signal account. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "The updated name is synced to the Signal network and appears immediately in your Signal app's "
-            "Settings → Linked Devices list across all your devices. "
-            "Only secondary (linked) devices can be renamed; the primary device name is set during registration. "
-            "Use list_devices to find all linked device IDs and their current names. "
-            "The device_id is a small integer (e.g. 2, 3); device 1 is always the primary. "
-            "Renaming does not affect the device's ability to send or receive messages. "
-            "Use when you want to distinguish between multiple linked devices by a meaningful label. "
-            "Use remove_device to unlink a device entirely. "
-            "Do NOT use to rename your own primary account — that is done via update_profile."
+            "Rename a device on your Signal account; the name shows in every device's Linked Devices list. device_id "
+            "(required, integer from list_devices); name (required): the new label. Renaming the device signal-mcp itself "
+            "runs on works everywhere; renaming any other device only works when signal-mcp is the account's primary device"
+            " — otherwise it fails with 'This command doesn't work on linked devices'. Does not affect messaging. Returns "
+            "status, device_id and name. To unlink a device use remove_device; to change your profile name use "
+            "update_profile."
         ),
         inputSchema={
             "type": "object",
@@ -1039,12 +1021,11 @@ TOOLS = [
     Tool(
         name="get_avatar",
         description=(
-            "Retrieve the profile photo for a contact or group as base64-encoded image data. "
-            "Pass a phone number (E.164) for contacts or a group ID (from list_groups) for groups. "
-            "Returns raw image bytes encoded as base64 — decode to get a JPEG or PNG. "
-            "Returns an error if no avatar is set for the identifier. "
-            "Use get_profile to also read name and about text alongside the avatar. "
-            "Use update_profile with avatar_path to set your own profile photo."
+            "Return a contact's or group's avatar image as base64, from the copy signal-cli has stored. identifier "
+            "(required): an E.164 phone number for a contact, or a group id from list_groups for a group (anything that is "
+            "not a full E.164 number is treated as a group id). Returns identifier, base64 (decode to get the JPEG/PNG "
+            "bytes) and has_avatar; fails with 'Could not find avatar' when none is stored. Use update_profile with "
+            "avatar_path to set your own photo, update_group with avatar for a group's."
         ),
         inputSchema={
             "type": "object",
@@ -1056,12 +1037,18 @@ TOOLS = [
     ),
     Tool(
         name="send_message_request_response",
-        description="Accept or decline a message request from an unknown contact (required before replying to strangers)",
+        description=(
+            "Accept or decline a message request from someone not in your contacts. sender (required, E.164) is who sent "
+            "the request; accept (required): true accepts, which shares your profile with them; false declines (deletes the"
+            " request) and turns profile sharing off. Declining does not block them — use block_contact for that. The "
+            "decision is recorded locally and synced to your linked devices; the sender is not sent a message. Returns "
+            "status 'message request accepted' or 'message request declined' and sender."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "sender": {"type": "string", "description": "Phone number of the contact who sent the message request"},
-                "accept": {"type": "boolean", "description": "true to accept and start chatting, false to decline/block"},
+                "sender": {"type": "string", "description": "Phone number (E.164) of the contact who sent the message request"},
+                "accept": {"type": "boolean", "description": "true to accept (shares your profile), false to decline (does not block)"},
             },
             "required": ["sender", "accept"],
         },
@@ -1140,21 +1127,19 @@ TOOLS = [
     Tool(
         name="set_expiration_timer",
         description=(
-            "Set or disable the disappearing-messages timer for a direct or group conversation. "
-            "Once set, all new messages auto-delete after expiration_seconds on both sides. "
-            "Common values: 3600 (1h), 86400 (1d), 604800 (1w), 2592000 (30d). "
-            "Set expiration_seconds=0 to disable disappearing messages entirely. "
-            "Provide recipient for a direct conversation or group_id for a group — exactly one is required. "
-            "The change is delivered to all participants and takes effect on new messages immediately; "
-            "existing messages already sent are not affected. "
-            "Use when you want automatic privacy for a sensitive conversation."
+            "Set or turn off the disappearing-messages timer of a one-to-one or group chat. expiration_seconds (required): "
+            "lifetime of new messages in seconds, 0 disables; common values 3600 (1h), 86400 (1d), 604800 (1w), 2592000 "
+            "(30d). Pass recipient (E.164) for a direct chat or group_id (from list_groups) for a group; one is required, "
+            "and group_id wins if both are given. Every participant is notified and the timer applies to new messages; "
+            "already sent messages are unaffected. For a group this is the same as update_group with expiration_seconds. "
+            "Returns status and seconds."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "expiration_seconds": {"type": "integer", "description": "Timer in seconds (0 to disable). Common: 3600=1h, 86400=1d, 604800=1w"},
-                "recipient": {"type": "string", "description": "Phone number for a direct conversation"},
-                "group_id": {"type": "string", "description": "Group ID for a group conversation"},
+                "recipient": {"type": "string", "description": "Phone number (E.164) for a direct conversation"},
+                "group_id": {"type": "string", "description": "Group ID (from list_groups) for a group conversation; wins if recipient is also given"},
             },
             "required": ["expiration_seconds"],
         },
@@ -1162,41 +1147,35 @@ TOOLS = [
     Tool(
         name="list_identities",
         description=(
-            "List the Signal identity keys (safety numbers) and trust levels for one or all contacts. "
-            "Each contact has a unique identity key; Signal uses these to verify end-to-end encryption integrity. "
-            "Trust levels: TRUSTED_VERIFIED (manually verified), TRUSTED_UNVERIFIED (trusted on first use, TOFU), "
-            "or UNTRUSTED (key changed — sending is blocked until re-trusted). "
-            "Omit number to inspect all stored identities; provide number to filter to a specific contact. "
-            "Use before calling trust_identity to check the current trust state and key fingerprint. "
-            "Use when Signal reports 'safety number changed' to identify which contact needs re-verification. "
-            "Do NOT use to trust or change trust levels — use trust_identity for that."
+            "List stored Signal identity keys (safety numbers) and their trust levels, from the local store. number "
+            "(optional, E.164) limits the result to one contact; omit it for all. Returns entries with number, uuid, "
+            "fingerprint, safetyNumber, scannableSafetyNumber, trustLevel and addedTimestamp (epoch ms). trustLevel is "
+            "TRUSTED_VERIFIED (manually verified), TRUSTED_UNVERIFIED (trusted on first use) or UNTRUSTED (key changed; "
+            "sending is blocked until re-trusted). Use it when Signal reports 'safety number changed' or before "
+            "trust_identity; it does not change trust itself."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "number": {"type": "string", "description": "Filter to a specific contact (optional)"},
+                "number": {"type": "string", "description": "Only this contact's keys (E.164 phone number); omit for all"},
             },
         },
     ),
     Tool(
         name="trust_identity",
         description=(
-            "Trust a contact's Signal identity key after verifying their safety number out-of-band. "
-            "Signal uses identity keys (safety numbers) to verify end-to-end encryption. "
-            "When a contact's safety number changes (e.g. they reinstalled Signal), sending fails "
-            "until you explicitly trust the new key — this tool resolves that block. "
-            "Provide safety_number to trust only that specific verified key; leave it blank to trust "
-            "all known keys for the number (less secure but unblocks delivery immediately). "
-            "Use list_identities to inspect the current trust level and key fingerprint before calling. "
-            "Use when Signal blocks delivery with 'untrusted identity' or 'safety number changed' errors. "
-            "Do NOT trust without first verifying the safety number via a trusted channel (in-person, phone call). "
-            "Trusting an unverified key bypasses Signal's TOFU identity verification."
+            "Mark a contact's identity key as trusted so sending to them works again after their safety number changed "
+            "(e.g. they reinstalled Signal). number (required, E.164). safety_number (optional): the safety number or "
+            "fingerprint you verified in person or by call, as shown by list_identities; only that key is trusted and it "
+            "becomes TRUSTED_VERIFIED. Without safety_number ALL known keys for the number are trusted unverified — this "
+            "unblocks delivery but skips verification, so prefer passing it. Changes local trust only; the contact is not "
+            "notified. Fails if the number or safety number does not match. Returns status 'trusted' and number."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "number": {"type": "string", "description": "Phone number to trust"},
-                "safety_number": {"type": "string", "description": "Verified safety number (leave blank to trust all known keys)"},
+                "number": {"type": "string", "description": "Phone number (E.164) whose identity key to trust"},
+                "safety_number": {"type": "string", "description": "Safety number or fingerprint you verified (from list_identities); omit to trust all known keys unverified"},
             },
             "required": ["number"],
         },
@@ -1598,14 +1577,17 @@ TOOLS += [
     Tool(
         name="find_contact",
         description=(
-            "Search contacts by name or phone number fragment. "
-            "Returns all contacts whose name or number contains the query string (case-insensitive). "
-            "Use this to look up a phone number when you only know a name, or to verify a contact exists."
+            "Find contacts whose number, name, given/family name, nickname or username contains query (case-insensitive "
+            "substring; required). Use it to resolve a name to an E.164 number before send_message, or to check that a "
+            "contact exists; use list_contacts instead to list everyone or filter by blocked status. all_recipients "
+            "(default false) also searches people outside your address book, e.g. group members known only by their profile"
+            " name. Reads the local contact store only. Returns a list (possibly empty) of contact objects with number, "
+            "uuid, name, given_name, family_name, about, blocked and display_name."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Name or phone number fragment to search for"},
+                "query": {"type": "string", "description": "Case-insensitive fragment of a name, nickname, username or phone number"},
                 "all_recipients": {"type": "boolean", "description": "Also include recipients that are not in your address book (e.g. members of your groups), with their profile names", "default": False},
             },
             "required": ["query"],
