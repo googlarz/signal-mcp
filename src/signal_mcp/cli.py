@@ -230,6 +230,24 @@ def groups(as_json: bool):
         sys.exit(1)
 
 
+@cli.command("group-label")
+@click.argument("group_id")
+@click.argument("label")
+@click.option("--emoji", default=None, help="Emoji shown with the label")
+def group_label(group_id: str, label: str, emoji: str | None):
+    """Set YOUR OWN member label in GROUP_ID (cannot set other members' labels)."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            await client.update_group(group_id, member_label=label, member_label_emoji=emoji)
+            click.echo(f"Label set to {label!r}")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 # ── history ───────────────────────────────────────────────────────────────────
 
 @cli.command()
