@@ -1099,7 +1099,7 @@ async def test_tool_mark_as_unread_missing_param():
 @respx.mock
 @pytest.mark.asyncio
 async def test_tool_get_avatar():
-    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "imgdata"})))
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"data": "imgdata"})))
     result = await call_tool("get_avatar", {"identifier": "+19999999999"})
     data = json.loads(result[0].text)
     assert data["base64"] == "imgdata"
@@ -1220,7 +1220,7 @@ async def test_tool_send_read_receipt_uses_sendReceipt():
 @respx.mock
 @pytest.mark.asyncio
 async def test_tool_get_sticker():
-    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "xyz"})))
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"data": "xyz"})))
     result = await call_tool("get_sticker", {"pack_id": "deadbeef", "sticker_id": 2})
     data = json.loads(result[0].text)
     assert data["base64"] == "xyz"

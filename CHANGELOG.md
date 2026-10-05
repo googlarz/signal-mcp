@@ -7,6 +7,18 @@ All notable changes to signal-mcp are documented here.
 ### Added
 
 - **Formatting in direct messages**: `send_message` takes `formatting: true` (CLI: `send --format`), same markers and same off-by-default rule as for groups and notes.
+- **MCP tool annotations on all 81 tools** (read-only / destructive / idempotent / open-world hints and a title), kept in one table (`tool_annotations.py`) and guarded by a test so a new tool can't ship unclassified.
+
+### Changed
+
+- **Tool descriptions rewritten** for every tool: each parameter is now explained in the description text (before, 106 of 257 were only in the JSON schema), with when-to-use-instead guidance for sibling tools, side effects and reversibility, and the exact result shape. Guarded by tests. Several old descriptions made claims the code does not back up (search "ranked by relevance", attachments "returned as base64", "no admin list" etc.); those are corrected.
+
+### Fixed
+
+- **`get_avatar` never worked for phone numbers.** signal-cli's `getAvatar` takes `profile`, `contact` or `groupId`; we sent `recipient`, which ends in a `NullPointerException`. It now asks for the contact's profile photo first and falls back to the locally set contact avatar.
+- **`get_avatar` and `get_sticker` always returned an empty image.** signal-cli returns the image in a field called `data`; the code read one called `base64`, which does not exist. Tests had mocked the wrong shape, so they passed.
+- **`get_profile` returned only a number and UUID.** It used `getUserStatus` (registration state). It now reads the profile (names, about) from the contact list, including non-contacts.
+- **README and `schedule-send` help said the background service sends scheduled messages. It does not.** Only `run_scheduled_messages` / `signal-mcp run-scheduled` send them; both texts now say so.
 
 ## [1.42.0] — 2026-10-05
 

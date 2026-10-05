@@ -1097,7 +1097,8 @@ def schedule_send(recipient: str, message: str, send_at: str, is_group: bool):
 
     Use 'signal-mcp scheduled' to list pending jobs and
     'signal-mcp cancel-scheduled ID' to cancel one.
-    The background service (install-service) will deliver them automatically.
+    Nothing sends them by itself: run 'signal-mcp run-scheduled' (for example from cron)
+    to deliver whatever is due.
     """
     from datetime import datetime as _dt
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):

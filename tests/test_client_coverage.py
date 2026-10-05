@@ -1,6 +1,7 @@
 """Coverage tests for signal_mcp/client.py — uncovered lines."""
 
 import asyncio
+import json
 import shutil
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1153,3 +1154,58 @@ async def test_process_scheduled_messages_routes_sends_and_records_outcomes(clie
     assert rows[future_id]["status"] == "pending"
     # Sent/failed jobs are not picked up again on the next run
     assert await client.process_scheduled_messages() == []
+
+
+# ── get_avatar: signal-cli's GetAvatarCommand reads profile / contact / group-id ──
+
+def _rpc_error(message):
+    return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": message}})
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_avatar_falls_back_from_profile_to_contact(client):
+    route = respx.post(DAEMON_URL).mock(side_effect=[
+        _rpc_error("Could not find avatar"),
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"data": "CONTACTPIC"}}),
+    ])
+    assert await client.get_avatar("+19999999999") == "CONTACTPIC"
+    sent = [json.loads(c.request.content)["params"] for c in route.calls]
+    assert sent == [{"profile": "+19999999999"}, {"contact": "+19999999999"}]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_avatar_returns_empty_when_neither_exists(client):
+    respx.post(DAEMON_URL).mock(return_value=_rpc_error("Could not find avatar"))
+    assert await client.get_avatar("+19999999999") == ""
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_avatar_other_errors_are_not_swallowed(client):
+    respx.post(DAEMON_URL).mock(return_value=_rpc_error("The user +19999999999 is not registered."))
+    with pytest.raises(SignalError, match="not registered"):
+        await client.get_avatar("+19999999999")
+
+
+# ── get_profile reads the real profile from the contact list ─────────────────
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_profile_returns_profile_names_from_contact_list(client):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([
+        {"number": "+19999999999", "uuid": "u1", "profile": {"givenName": "Anna", "familyName": "Berg", "about": "hi"}},
+        {"number": "+18888888888", "uuid": "u2"},
+    ])))
+    c = await client.get_profile("+19999999999")
+    assert (c.given_name, c.family_name, c.about) == ("Anna", "Berg", "hi")
+    assert json.loads(route.calls[0].request.content)["method"] == "listContacts"
+    assert json.loads(route.calls[0].request.content)["params"]["allRecipients"] is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_sticker_reads_the_data_field_signal_cli_returns(client):
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"data": "WEBPBYTES"})))
+    assert await client.get_sticker("pack1", 3) == "WEBPBYTES"

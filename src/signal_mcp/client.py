@@ -1244,6 +1244,11 @@ class SignalClient:
         return contacts
 
     async def get_profile(self, number: str) -> Contact:
+        # getUserStatus only knows registration state; the profile (name, about) lives in
+        # the contact list, including non-contacts when all_recipients is set.
+        for contact in await self.list_contacts(all_recipients=True):
+            if contact.number == number:
+                return contact
         result = await self._rpc("getUserStatus", {"recipient": [number]})
         entries = result if isinstance(result, list) else [result]
         for entry in entries:
@@ -1592,9 +1597,7 @@ class SignalClient:
     async def get_sticker(self, pack_id: str, sticker_id: int) -> str:
         """Get a single sticker image as a base64-encoded string."""
         result = await self._rpc("getSticker", {"packId": pack_id, "stickerId": sticker_id})
-        if isinstance(result, dict):
-            return result.get("base64", "") or ""
-        return str(result) if result else ""
+        return self._avatar_data(result)
 
     async def upload_sticker_pack(self, path: str) -> str:
         """Upload a sticker pack from a local manifest.json or zip file.
@@ -1825,18 +1828,28 @@ class SignalClient:
 
         Returns the base64-encoded image string, or empty string if none.
         """
-        # signal-cli distinguishes contact avatars vs group avatars by param name.
+        # GetAvatarCommand reads exactly one of: profile, contact, group-id (not "recipient").
         # Base64 group IDs can themselves start with "+", so match a full E.164
         # phone number rather than just checking the leading character.
-        if _E164_RE.match(identifier):
-            result = await self._rpc("getAvatar", {"recipient": identifier})
-        else:
-            result = await self._rpc("getAvatar", {"groupId": identifier})
-        if isinstance(result, dict):
-            return result.get("base64", "") or ""
-        return str(result) if result else ""
+        if not _E164_RE.match(identifier):
+            return self._avatar_data(await self._rpc("getAvatar", {"groupId": identifier}))
+        # The contact's own profile photo is what people mean; the locally set "contact"
+        # avatar is only a fallback.
+        for kind in ("profile", "contact"):
+            try:
+                return self._avatar_data(await self._rpc("getAvatar", {kind: identifier}))
+            except SignalError as e:
+                if "Could not find avatar" not in str(e):
+                    raise
+        return ""
 
-    # ── Message requests ──────────────────────────────────────────────────────
+    @staticmethod
+    def _avatar_data(result) -> str:
+        """base64 image from a getAvatar/getSticker reply: signal-cli's JsonAttachmentData
+        puts it under "data" (older code here read "base64", which never existed)."""
+        if isinstance(result, dict):
+            return result.get("data") or result.get("base64") or ""
+        return str(result) if result else ""
 
     async def send_message_request_response(
         self, sender: str, accept: bool

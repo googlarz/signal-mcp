@@ -358,7 +358,7 @@ Start with `signal-mcp doctor` — it checks signal-cli, your linked account, th
 | `schedule_message` | Queue a message for later (`send_at`, ISO datetime) to a contact or group. |
 | `list_scheduled_messages` | List queued messages (`include_done` adds sent, cancelled and failed ones). |
 | `cancel_scheduled_message` | Cancel a pending scheduled message by id. |
-| `run_scheduled_messages` | Send everything that is due now. The background service does this automatically. |
+| `run_scheduled_messages` | Send everything that is due now. Nothing sends scheduled messages by itself — call this tool, or run `signal-mcp run-scheduled` (e.g. from cron). |
 
 ### Webhooks
 

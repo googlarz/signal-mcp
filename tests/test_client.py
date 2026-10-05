@@ -1345,18 +1345,18 @@ async def test_mark_as_unread_client(client):
 @respx.mock
 @pytest.mark.asyncio
 async def test_get_avatar_contact(client):
-    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "abc123"})))
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"data": "abc123"})))
     result = await client.get_avatar("+19999999999")
     assert result == "abc123"
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "getAvatar"
-    assert "recipient" in req_body["params"]
+    assert req_body["params"] == {"profile": "+19999999999"}  # GetAvatarCommand has no "recipient"
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_get_avatar_group(client):
-    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "xyz"})))
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"data": "xyz"})))
     result = await client.get_avatar("grp==")
     req_body = json.loads(respx.calls[-1].request.content)
     assert "groupId" in req_body["params"]
@@ -1470,7 +1470,7 @@ async def test_send_read_receipt_rpc_method(client):
 @respx.mock
 @pytest.mark.asyncio
 async def test_get_sticker(client):
-    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"base64": "abc123"})))
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"data": "abc123"})))
     result = await client.get_sticker("deadbeef", 3)
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "getSticker"
