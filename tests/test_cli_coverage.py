@@ -651,7 +651,7 @@ def test_find_contact_table(runner):
     assert result.exit_code == 0
     assert "Alice" in result.output
     assert "BLOCKED" in result.output
-    client.list_contacts.assert_called_once_with(search="a")
+    client.list_contacts.assert_called_once_with(search="a", all_recipients=False)
 
 
 def test_find_contact_json(runner):

@@ -236,6 +236,8 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "search": {"type": "string", "description": "Filter contacts by name or number (case-insensitive substring match)"},
+                "all_recipients": {"type": "boolean", "description": "Also include recipients that are not in your address book (e.g. members of your groups), with their profile names", "default": False},
+                "blocked": {"type": "boolean", "description": "true = only blocked contacts, false = only unblocked (omit for all)"},
             },
         },
     ),
@@ -368,18 +370,17 @@ TOOLS = [
             "Call with stop=true to cancel an in-progress typing indicator early (e.g. if the user abandons the message). "
             "signal-cli relays the indicator via the Signal protocol; if the recipient has typing indicators "
             "disabled in their settings, it is silently ignored on their end — no error is returned. "
-            "Typing indicators are only supported for one-to-one DMs; passing a group_id is not valid. "
+            "Provide recipient for a one-to-one chat or group_id for a group (at least one is required). "
             "Use before send_message to create a realistic 'typing' effect in an automated workflow. "
-            "Do NOT use for groups — group typing indicators are not supported by Signal. "
             "Do NOT call repeatedly in a tight loop; one call per composing session is sufficient."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "recipient": {"type": "string", "description": "Phone number in E.164 format"},
+                "group_id": {"type": "string", "description": "Group ID (base64) to show typing in a group"},
                 "stop": {"type": "boolean", "description": "Set to true to cancel an active typing indicator (default: false = start typing)", "default": False},
             },
-            "required": ["recipient"],
         },
     ),
     Tool(
@@ -446,12 +447,16 @@ TOOLS = [
             "This only removes the local record — it does NOT block the contact, delete message history, "
             "or affect the contact's ability to message you. "
             "To prevent incoming messages, use block_contact instead. "
+            "Set hide=true to only hide the contact from the list (data kept), or forget=true to delete "
+            "all data for the recipient including identity keys and sessions (mutually exclusive). "
             "Use update_contact to set a local display name without removing."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "number": {"type": "string", "description": "Phone number to remove (E.164 format)"},
+                "hide": {"type": "boolean", "description": "Hide the contact but keep its data", "default": False},
+                "forget": {"type": "boolean", "description": "Delete all data for this recipient, including identity keys and sessions", "default": False},
             },
             "required": ["number"],
         },
@@ -473,8 +478,12 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Display name to set"},
+                "name": {"type": "string", "description": "Display (given) name to set; alias of given_name"},
+                "given_name": {"type": "string", "description": "Profile given name"},
+                "family_name": {"type": "string", "description": "Profile family name"},
                 "about": {"type": "string", "description": "About/bio text"},
+                "about_emoji": {"type": "string", "description": "Emoji shown next to the about text"},
+                "mobilecoin_address": {"type": "string", "description": "MobileCoin address (base64)"},
                 "avatar_path": {"type": "string", "description": "Path to avatar image file"},
                 "remove_avatar": {"type": "boolean", "description": "Remove current avatar", "default": False},
             },
@@ -620,7 +629,7 @@ TOOLS = [
     Tool(
         name="get_user_status",
         description=(
-            "Check whether one or more phone numbers are registered Signal users. "
+            "Check whether one or more phone numbers or usernames are registered Signal users. "
             "Queries Signal's servers for each number and returns a registered/unregistered status. "
             "Accepts a list so you can batch-check multiple numbers in a single call. "
             "Useful before sending to an unknown number to avoid 'unregistered user' delivery failures. "
@@ -637,8 +646,12 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "List of phone numbers (E.164) to check",
                 },
+                "usernames": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of Signal usernames or username links to check",
+                },
             },
-            "required": ["recipients"],
         },
     ),
     Tool(
@@ -723,7 +736,8 @@ TOOLS = [
     Tool(
         name="update_contact",
         description=(
-            "Set or update the local display name for a Signal contact. "
+            "Set or update the local display name, nickname or note for a Signal contact "
+            "(at least one of name, given_name, family_name, nick_given_name, nick_family_name, note). "
             "The name is stored only in signal-cli's local contact database — it is never sent to or visible by the contact. "
             "Overrides the contact's own profile name in list_contacts and conversation displays. "
             "Useful for adding a human-readable label to a number that has no Signal profile name. "
@@ -737,8 +751,13 @@ TOOLS = [
             "properties": {
                 "number": {"type": "string", "description": "Phone number in E.164 format"},
                 "name": {"type": "string", "description": "Display name to set"},
+                "given_name": {"type": "string", "description": "Contact given name"},
+                "family_name": {"type": "string", "description": "Contact family name"},
+                "nick_given_name": {"type": "string", "description": "Nickname given name"},
+                "nick_family_name": {"type": "string", "description": "Nickname family name"},
+                "note": {"type": "string", "description": "Private note about the contact"},
             },
-            "required": ["number", "name"],
+            "required": ["number"],
         },
     ),
     Tool(
@@ -1457,6 +1476,7 @@ TOOLS += [
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Name or phone number fragment to search for"},
+                "all_recipients": {"type": "boolean", "description": "Also include recipients that are not in your address book (e.g. members of your groups), with their profile names", "default": False},
             },
             "required": ["query"],
         },
@@ -1560,12 +1580,11 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             "get_conversation":     ["recipient"],
             "search_messages":      ["query"],
             "react_to_message":     ["target_author", "target_timestamp", "emoji"],
-            "set_typing":           ["recipient"],
             "get_profile":          ["number"],
             "block_contact":        ["number"],
             "unblock_contact":      ["number"],
             "remove_contact":       ["number"],
-            "update_contact":       ["number", "name"],
+            "update_contact":       ["number"],
             "create_group":         ["name", "members"],
             "join_group":           ["uri"],
             "add_device":           ["uri"],
@@ -1585,7 +1604,6 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             "edit_message":         ["target_timestamp", "message"],
             "clear_local_store":    ["confirm"],
             "delete_local_messages":["recipient"],
-            "get_user_status":      ["recipients"],
             "pin_message":                    ["target_author", "target_timestamp"],
             "unpin_message":                  ["target_author", "target_timestamp"],
             "admin_delete_message":           ["group_id", "target_author", "target_timestamp"],
@@ -1692,7 +1710,11 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok([client._enrich_message(m) for m in messages])
 
         elif name == "list_contacts":
-            contacts = await client.list_contacts(search=arguments.get("search"))
+            contacts = await client.list_contacts(
+                search=arguments.get("search"),
+                all_recipients=arguments.get("all_recipients", False),
+                blocked=arguments.get("blocked"),
+            )
             return _ok([c.to_dict() for c in contacts])
 
         elif name == "list_groups":
@@ -1784,7 +1806,11 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok({"status": action})
 
         elif name == "set_typing":
-            await client.set_typing(arguments["recipient"], stop=arguments.get("stop", False))
+            await client.set_typing(
+                arguments.get("recipient"),
+                stop=arguments.get("stop", False),
+                group_id=arguments.get("group_id"),
+            )
             return _ok({"status": "typing indicator sent"})
 
         elif name == "get_profile":
@@ -1800,7 +1826,11 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok({"status": "unblocked", "number": arguments["number"]})
 
         elif name == "remove_contact":
-            await client.remove_contact(arguments["number"])
+            await client.remove_contact(
+                arguments["number"],
+                forget=arguments.get("forget", False),
+                hide=arguments.get("hide", False),
+            )
             return _ok({"status": "removed", "number": arguments["number"]})
 
         elif name == "update_profile":
@@ -1809,6 +1839,10 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
                 about=arguments.get("about"),
                 avatar_path=arguments.get("avatar_path"),
                 remove_avatar=arguments.get("remove_avatar", False),
+                given_name=arguments.get("given_name"),
+                family_name=arguments.get("family_name"),
+                about_emoji=arguments.get("about_emoji"),
+                mobilecoin_address=arguments.get("mobilecoin_address"),
             )
             return _ok({"status": "profile updated"})
 
@@ -1900,8 +1934,16 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok({"status": "read receipt sent"})
 
         elif name == "update_contact":
-            await client.update_contact(arguments["number"], arguments["name"])
-            return _ok({"status": "contact updated", "number": arguments["number"], "name": arguments["name"]})
+            await client.update_contact(
+                arguments["number"],
+                name=arguments.get("name"),
+                given_name=arguments.get("given_name"),
+                family_name=arguments.get("family_name"),
+                nick_given_name=arguments.get("nick_given_name"),
+                nick_family_name=arguments.get("nick_family_name"),
+                note=arguments.get("note"),
+            )
+            return _ok({"status": "contact updated", "number": arguments["number"], "name": arguments.get("name")})
 
         elif name == "update_group":
             await client.update_group(
@@ -2040,7 +2082,9 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             return _ok({"deleted": count, "status": "deleted"})
 
         elif name == "get_user_status":
-            statuses = await client.get_user_status(arguments["recipients"])
+            statuses = await client.get_user_status(
+                arguments.get("recipients"), usernames=arguments.get("usernames")
+            )
             return _ok(statuses)
 
         elif name == "send_sync_request":
@@ -2164,7 +2208,9 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
             if err:
                 return _err(err)
             await client.ensure_daemon()
-            contacts = await client.list_contacts(search=arguments["query"])
+            contacts = await client.list_contacts(
+                search=arguments["query"], all_recipients=arguments.get("all_recipients", False)
+            )
             return _ok([c.to_dict() for c in contacts])
 
         elif name == "schedule_message":
