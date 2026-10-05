@@ -11,7 +11,7 @@ All notable changes to signal-mcp are documented here.
 ### Changed
 
 - PyPI package metadata: a clearer one-line description, keywords, classifiers and project links (homepage, issues, changelog).
-- README rewritten around what you get first: example conversation, real terminal output, quick start, a "what you can ask" table, a privacy section, an honest comparison with other Signal MCP servers, troubleshooting, and the previously undocumented scheduling/webhook tools and CLI commands.
+- README rewritten around what you get first: example conversation, real terminal output, quick start, a "what you can ask" table, a privacy section, troubleshooting, and the previously undocumented scheduling/webhook tools and CLI commands.
 
 ## [1.40.0] — 2026-10-05
 
