@@ -14,7 +14,7 @@ Searchable message history · 80+ tools · groups, polls, mentions, labels · re
 
 </div>
 
-signal-mcp is an [MCP](https://modelcontextprotocol.io) server and CLI built on [signal-cli](https://github.com/AsamK/signal-cli). It links to your existing Signal account as a device, keeps every message in a local database you can search, and lets an AI assistant like Claude read, search and — if you allow it — act on your chats. No cloud service, no third party: your messages stay on your computer.
+signal-mcp is an [MCP](https://modelcontextprotocol.io) server and CLI built on [signal-cli](https://github.com/AsamK/signal-cli), the community-made, unofficial Signal client. It links to your existing Signal account as a device, keeps every message in a local database you can search, and lets an AI assistant like Claude read, search and — if you allow it — act on your chats. No cloud service, no third party: your messages stay on your computer.
 
 ```text
 You     What did the coach say about Sunday, and did anyone offer to bring the jerseys?
@@ -29,6 +29,8 @@ Claude  Sent to "U12 Team": "@Daniel we'll be there at 10:15 👍"
 ```
 
 <sup>Illustrative example with made-up names.</sup>
+
+> **Independent project — not affiliated with Signal.** signal-mcp is not made, endorsed or supported by Signal Messenger or the Signal Foundation. It talks to Signal through [signal-cli](https://github.com/AsamK/signal-cli), an unofficial third-party client that you link to your account as an extra device (like Signal Desktop). Signal does not provide support for unofficial clients, and using one is at your own risk — see [Signal's Terms of Service](https://signal.org/legal/).
 
 The same data from your terminal — this is real `signal-mcp` output on a demo database:
 
@@ -90,7 +92,7 @@ Prefer the terminal? Everything is also a command — `signal-mcp send`, `search
 
 ### Step 1 — Install signal-cli
 
-signal-mcp is a front-end for [signal-cli](https://github.com/AsamK/signal-cli), which handles the Signal protocol.
+signal-mcp is a front-end for [signal-cli](https://github.com/AsamK/signal-cli), an independent, unofficial client that handles the Signal protocol.
 
 **macOS**
 ```bash
