@@ -2,7 +2,7 @@
 
 All notable changes to signal-mcp are documented here.
 
-## [Unreleased]
+## [1.40.0] — 2026-10-05
 
 Closes the gap between signal-cli and the MCP tools: a command-by-command and field-by-field comparison found that signal-mcp discarded most incoming-message data and exposed only part of several commands' options.
 
