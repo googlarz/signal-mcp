@@ -693,8 +693,13 @@ async def test_get_attachment_not_found_raises(client, tmp_path, monkeypatch):
     att_dir = tmp_path / "att"
     att_dir.mkdir()
     monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
-    with pytest.raises(SignalError, match="not found"):
-        client.get_attachment("ghost.jpg")
+    async def noop(): pass
+    monkeypatch.setattr(client, "ensure_daemon", noop)
+    with respx.mock:
+        respx.post(DAEMON_URL).mock(return_value=httpx.Response(
+            200, json=rpc_err("Could not find attachment with ID: ghost.jpg")))
+        with pytest.raises(SignalError, match="not found"):
+            await client.get_attachment("ghost.jpg")
 
 
 @pytest.mark.asyncio
@@ -766,8 +771,8 @@ async def test_get_attachment_path_traversal_blocked(client, tmp_path, monkeypat
     att_dir.mkdir()
     (tmp_path / "secret.txt").write_text("secret")
     monkeypatch.setattr(_client_mod, "ATTACHMENT_DIR", att_dir)
-    with pytest.raises(SignalError):
-        client.get_attachment("../secret.txt")
+    with pytest.raises(SignalError, match="Invalid attachment filename"):
+        await client.get_attachment("../secret.txt")
 
 
 @pytest.mark.asyncio

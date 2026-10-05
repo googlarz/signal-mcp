@@ -37,15 +37,33 @@ def cli():
 
 # ── send ──────────────────────────────────────────────────────────────────────
 
+def _send_flags(f):
+    """Options shared by `send` and `send-group`, forwarded to the client's send options."""
+    for opt in reversed([
+        click.option("--quote-author", default=None, help="Author (E.164) of the message to reply to"),
+        click.option("--quote-timestamp", type=int, default=None, help="Timestamp of the message to reply to"),
+        click.option("--preview-url", default=None, help="Link preview URL (must also appear in MESSAGE)"),
+        click.option("--preview-title", default=None, help="Link preview title"),
+        click.option("--preview-description", default=None, help="Link preview description"),
+        click.option("--no-urgent", is_flag=True, help="Send without a push notification"),
+    ]):
+        f = opt(f)
+    return f
+
+
 @cli.command()
 @click.argument("recipient")
 @click.argument("message")
-def send(recipient: str, message: str):
-    """Send a text message to RECIPIENT (phone number in E.164 format)."""
+@_send_flags
+def send(recipient: str, message: str, **options):
+    """Send a text message to RECIPIENT (E.164 phone number, or a username like alice.42)."""
     async def _run():
         async with SignalClient() as client:
             await client.ensure_daemon()
-            result = await client.send_message(recipient, message)
+            if _E164_RE.match(recipient):
+                result = await client.send_message(recipient, message, **options)
+            else:
+                result = await client.send_message(None, message, username=recipient, **options)
             click.echo(f"Sent (timestamp: {result.timestamp})")
     try:
         run(_run())
@@ -59,12 +77,13 @@ def send(recipient: str, message: str):
 @cli.command("send-group")
 @click.argument("group_id")
 @click.argument("message")
-def send_group(group_id: str, message: str):
+@_send_flags
+def send_group(group_id: str, message: str, **options):
     """Send a text message to GROUP_ID (use 'groups' command to list IDs)."""
     async def _run():
         async with SignalClient() as client:
             await client.ensure_daemon()
-            result = await client.send_group_message(group_id, message)
+            result = await client.send_group_message(group_id, message, **options)
             click.echo(f"Sent (timestamp: {result.timestamp})")
     try:
         run(_run())
@@ -282,6 +301,26 @@ def note(message: str):
             await client.ensure_daemon()
             result = await client.send_note_to_self(message)
             click.echo(f"Note saved (timestamp: {result.timestamp})")
+    try:
+        run(_run())
+    except SignalError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ── story ─────────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("path")
+@click.option("--group", "group_id", default=None, help="Post to this group's story instead of My Story")
+@click.option("--no-replies", is_flag=True, help="Disable replies to the story")
+def story(path: str, group_id: str | None, no_replies: bool):
+    """Post the image or video at PATH as a story."""
+    async def _run():
+        async with SignalClient() as client:
+            await client.ensure_daemon()
+            result = await client.send_story(path, group_id=group_id, allow_replies=not no_replies)
+            click.echo(f"Story posted (timestamp: {result.timestamp})")
     try:
         run(_run())
     except SignalError as e:

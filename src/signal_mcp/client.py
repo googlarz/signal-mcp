@@ -1,6 +1,7 @@
 """Async signal-cli JSON-RPC client. Single backend for all reads and writes."""
 
 import asyncio
+import base64
 import itertools
 import logging
 import os
@@ -53,6 +54,50 @@ def _validate_e164(number: str) -> None:
         raise SignalError(
             f"Invalid phone number '{number}' — must be E.164 format (e.g. +12125551234)"
         )
+
+
+# Signal usernames are "nickname.discriminator" (3-32 char nickname, 2+ digit
+# discriminator); signal-cli also accepts a username link.
+_USERNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,31}\.\d{2,9}$")
+_USERNAME_LINK_PREFIX = "https://signal.me/#eu/"
+
+
+def _direct_target(recipient: str | None, username: str | None) -> dict:
+    """Validated `send` params addressing one contact by number or by username."""
+    if bool(recipient) == bool(username):
+        raise SignalError("Provide exactly one of recipient or username")
+    if username:
+        if not (_USERNAME_RE.match(username) or username.startswith(_USERNAME_LINK_PREFIX)):
+            raise SignalError(
+                f"Invalid username '{username}' — expected nickname.digits (e.g. alice.42) "
+                f"or a {_USERNAME_LINK_PREFIX}… link"
+            )
+        return {"username": [username]}
+    _validate_e164(recipient)
+    return {"recipient": [recipient]}
+
+
+def _checked_send_path(path: str) -> str:
+    """Resolve a local file the AI wants to send, enforcing the SEND_ROOTS allowlist."""
+    try:
+        return str(validate_send_path(path))
+    except ValueError as e:
+        raise SignalError(str(e)) from e
+
+
+def _mention_strings(mentions: list[dict]) -> list[str]:
+    # signal-cli's mention parser only accepts "start:length:author" strings
+    # (it calls Pattern.matcher() on each element) — a JSON object throws
+    # ClassCastException on signal-cli's side.
+    return [f"{m['start']}:{m['length']}:{m['author']}" for m in mentions]
+
+
+def _quote_attachment(spec: str) -> str:
+    """Validate the optional previewFile in a 'contentType[:filename[:previewFile]]' spec."""
+    parts = spec.split(":", 2)
+    if len(parts) == 3:
+        parts[2] = _checked_send_path(parts[2])
+    return ":".join(parts)
 
 
 _SIGNAL_ERROR_HINTS: list[tuple[str, str]] = [
@@ -342,51 +387,108 @@ class SignalClient:
 
     # ── Messaging ─────────────────────────────────────────────────────────────
 
-    async def send_message(
+    async def _apply_send_options(
         self,
-        recipient: str,
-        message: str,
+        params: dict,
         quote_author: str | None = None,
         quote_timestamp: int | None = None,
-    ) -> SendResult:
-        _validate_e164(recipient)
-        await self._rate_limiter.acquire()
-        params: dict = {"recipient": [recipient], "message": message}
+        quote_message: str | None = None,
+        quote_mentions: list[dict] | None = None,
+        quote_text_styles: list[str] | None = None,
+        quote_attachments: list[str] | None = None,
+        preview_url: str | None = None,
+        preview_title: str | None = None,
+        preview_description: str | None = None,
+        preview_image: str | None = None,
+        story_author: str | None = None,
+        story_timestamp: int | None = None,
+        voice_note: bool = False,
+        no_urgent: bool = False,
+        notify_self: bool = False,
+    ) -> None:
+        """Add the optional `send` RPC params shared by all send methods."""
         if quote_author and quote_timestamp:
             params["quoteAuthor"] = quote_author
             params["quoteTimestamp"] = quote_timestamp
+            if quote_message is None:
+                # signal-cli sends "" as the quoted text when quoteMessage is absent,
+                # so the quote bubble would be empty wherever the original isn't on hand.
+                quote_message = await asyncio.to_thread(
+                    _store.get_message_body, quote_timestamp, quote_author
+                )
+            if quote_message:
+                params["quoteMessage"] = quote_message
+            if quote_mentions:
+                params["quoteMention"] = _mention_strings(quote_mentions)
+            if quote_text_styles:
+                params["quoteTextStyle"] = quote_text_styles
+            if quote_attachments:
+                params["quoteAttachment"] = [_quote_attachment(a) for a in quote_attachments]
+        if preview_url:
+            params["previewUrl"] = preview_url
+            if preview_title:
+                params["previewTitle"] = preview_title
+            if preview_description:
+                params["previewDescription"] = preview_description
+            if preview_image:
+                params["previewImage"] = _checked_send_path(preview_image)
+        if story_timestamp:
+            if not story_author:
+                raise SignalError("story_author is required with story_timestamp")
+            params["storyTimestamp"] = story_timestamp
+            params["storyAuthor"] = story_author
+        if voice_note:
+            params["voiceNote"] = True
+        if no_urgent:
+            params["noUrgent"] = True
+        if notify_self:
+            params["notifySelf"] = True
+
+    async def send_message(
+        self,
+        recipient: str | None,
+        message: str,
+        username: str | None = None,
+        end_session: bool = False,
+        **options,
+    ) -> SendResult:
+        target = _direct_target(recipient, username)
+        dest = recipient or username
+        await self._rate_limiter.acquire()
+        if end_session:
+            result = await self._rpc("send", {**target, "endSession": True})
+            ts = (result or {}).get("timestamp", int(time.time() * 1000))
+            return SendResult(timestamp=ts, recipient=dest, success=True)
+        params: dict = {**target, "message": message}
+        await self._apply_send_options(params, **options)
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        quote_timestamp = options.get("quote_timestamp")
         await asyncio.to_thread(_store.save_message, Message(
-            id=f"sent_{ts}_{recipient}",
+            id=f"sent_{ts}_{dest}",
             sender=self.account,
-            recipient=recipient,
+            recipient=dest,
             body=message,
             timestamp=datetime.fromtimestamp(ts / 1000),
             quote_id=str(quote_timestamp) if quote_timestamp else None,
         ))
-        return SendResult(timestamp=ts, recipient=recipient, success=True)
+        return SendResult(timestamp=ts, recipient=dest, success=True)
 
     async def send_group_message(
         self,
         group_id: str,
         message: str,
         mentions: list[dict] | None = None,
-        quote_author: str | None = None,
-        quote_timestamp: int | None = None,
+        **options,
     ) -> SendResult:
         await self._rate_limiter.acquire()
         params: dict = {"groupId": group_id, "message": message}
         if mentions:
-            # signal-cli's mention parser only accepts "start:length:author" strings
-            # (it calls Pattern.matcher() on each element) — a JSON object throws
-            # ClassCastException on signal-cli's side.
-            params["mention"] = [f"{m['start']}:{m['length']}:{m['author']}" for m in mentions]
-        if quote_author and quote_timestamp:
-            params["quoteAuthor"] = quote_author
-            params["quoteTimestamp"] = quote_timestamp
+            params["mention"] = _mention_strings(mentions)
+        await self._apply_send_options(params, **options)
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        quote_timestamp = options.get("quote_timestamp")
         await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{group_id}",
             sender=self.account,
@@ -402,8 +504,7 @@ class SignalClient:
         self,
         message: str,
         attachments: list[str] | None = None,
-        quote_author: str | None = None,
-        quote_timestamp: int | None = None,
+        **options,
     ) -> SendResult:
         """Send a note to yourself (saved messages).
 
@@ -417,11 +518,10 @@ class SignalClient:
             params["textStyle"] = style_ranges
         if attachments:
             params["attachment"] = [str(Path(p).expanduser().resolve()) for p in attachments]
-        if quote_author and quote_timestamp:
-            params["quoteAuthor"] = quote_author
-            params["quoteTimestamp"] = quote_timestamp
+        await self._apply_send_options(params, **options)
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
+        quote_timestamp = options.get("quote_timestamp")
         await asyncio.to_thread(_store.save_message, Message(
             id=f"sent_{ts}_{self.account}",
             sender=self.account,
@@ -434,33 +534,33 @@ class SignalClient:
 
     async def send_attachment(
         self,
-        recipient: str,
+        recipient: str | None,
         path: str | list[str],
         caption: str = "",
         view_once: bool = False,
+        username: str | None = None,
+        **options,
     ) -> SendResult:
-        _validate_e164(recipient)
+        target = _direct_target(recipient, username)
+        dest = recipient or username
         await self._rate_limiter.acquire()
         paths = [path] if isinstance(path, str) else path
-        try:
-            resolved = [str(validate_send_path(p)) for p in paths]
-        except ValueError as e:
-            raise SignalError(str(e)) from e
-        params: dict = {"recipient": [recipient], "attachment": resolved}
+        params: dict = {**target, "attachment": [_checked_send_path(p) for p in paths]}
         if caption:
             params["message"] = caption
         if view_once:
             params["viewOnce"] = True
+        await self._apply_send_options(params, **options)
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         await asyncio.to_thread(_store.save_message, Message(
-            id=f"sent_{ts}_{recipient}",
+            id=f"sent_{ts}_{dest}",
             sender=self.account,
-            recipient=recipient,
+            recipient=dest,
             body=caption,
             timestamp=datetime.fromtimestamp(ts / 1000),
         ))
-        return SendResult(timestamp=ts, recipient=recipient, success=True)
+        return SendResult(timestamp=ts, recipient=dest, success=True)
 
     async def send_group_attachment(
         self,
@@ -468,18 +568,16 @@ class SignalClient:
         path: str | list[str],
         caption: str = "",
         view_once: bool = False,
+        **options,
     ) -> SendResult:
         await self._rate_limiter.acquire()
         paths = [path] if isinstance(path, str) else path
-        try:
-            resolved = [str(validate_send_path(p)) for p in paths]
-        except ValueError as e:
-            raise SignalError(str(e)) from e
-        params: dict = {"groupId": group_id, "attachment": resolved}
+        params: dict = {"groupId": group_id, "attachment": [_checked_send_path(p) for p in paths]}
         if caption:
             params["message"] = caption
         if view_once:
             params["viewOnce"] = True
+        await self._apply_send_options(params, **options)
         result = await self._rpc("send", params)
         ts = result.get("timestamp", int(time.time() * 1000))
         await asyncio.to_thread(_store.save_message, Message(
@@ -491,6 +589,20 @@ class SignalClient:
             is_read=True,  # sent by us, already "read"
         ))
         return SendResult(timestamp=ts, recipient=group_id, success=True)
+
+    async def send_story(
+        self, path: str, group_id: str | None = None, allow_replies: bool = True
+    ) -> SendResult:
+        """Post an image/video story to My Story, or to a group's story."""
+        await self._rate_limiter.acquire()
+        params: dict = {"attachment": _checked_send_path(path)}
+        if group_id:
+            params["groupId"] = group_id
+        if not allow_replies:
+            params["noReplies"] = True
+        result = await self._rpc("sendStory", params)
+        ts = (result or {}).get("timestamp", int(time.time() * 1000))
+        return SendResult(timestamp=ts, recipient=group_id or "my_story", success=True)
 
     async def send_sticker(
         self, recipient: str, pack_id: str, sticker_id: int
@@ -551,15 +663,28 @@ class SignalClient:
                 })
         return files
 
-    def get_attachment(self, filename: str) -> dict:
-        """Get info about a specific downloaded attachment by filename."""
+    async def get_attachment(self, filename: str) -> dict:
+        """Get info about a downloaded attachment by filename.
+
+        If it isn't in ATTACHMENT_DIR, ask signal-cli for it by attachment id
+        (signal-cli's getAttachment reads its own attachment store) and save it there.
+        """
         att_dir = ATTACHMENT_DIR
         # Resolve to prevent path traversal (e.g. "../secret")
         path = (att_dir / filename).resolve()
         if path.parent != att_dir.resolve():
             raise SignalError(f"Invalid attachment filename: {filename}")
-        if not path.exists() or not path.is_file():
-            raise SignalError(f"Attachment not found: {filename}")
+        if not path.is_file():
+            await self.ensure_daemon()
+            try:
+                result = await self._rpc("getAttachment", {"id": filename})
+            except SignalError as e:
+                raise SignalError(f"Attachment not found: {filename} ({e})") from e
+            if not (result or {}).get("data"):
+                raise SignalError(f"Attachment not found: {filename}")
+            data = base64.b64decode(result["data"])
+            ensure_attachment_dir()
+            await asyncio.to_thread(path.write_bytes, data)
         stat = path.stat()
         return {
             "filename": path.name,
@@ -595,9 +720,14 @@ class SignalClient:
             params["recipient"] = [recipient]
         await self._rpc("sendReaction", params)
 
-    async def receive_messages(self, timeout: int = 5) -> list[Message]:
+    async def receive_messages(self, timeout: int = 5, max_messages: int | None = None) -> list[Message]:
         """Poll for new messages and persist them to local store."""
-        result = await self._rpc("receive", {"timeout": timeout}, timeout=timeout + 5.0)
+        # The daemon's receive RPC only takes timeout/maxMessages (ReceiveParams);
+        # the ignore-* switches are daemon start-up options there.
+        params: dict = {"timeout": timeout}
+        if max_messages:
+            params["maxMessages"] = max_messages
+        result = await self._rpc("receive", params, timeout=timeout + 5.0)
         messages = []
         for envelope in result if isinstance(result, list) else []:
             # Intercept incoming edits: update existing message body rather than saving a new ghost
@@ -626,7 +756,15 @@ class SignalClient:
                 messages.append(msg)
         return messages
 
-    async def receive_direct(self, timeout: int = 5) -> list[Message]:
+    async def receive_direct(
+        self,
+        timeout: int = 5,
+        max_messages: int | None = None,
+        ignore_attachments: bool = False,
+        ignore_stories: bool = False,
+        ignore_avatars: bool = False,
+        ignore_stickers: bool = False,
+    ) -> list[Message]:
         """Receive messages by calling signal-cli directly (no daemon).
 
         Stops any running daemon first to release the receive lock, then
@@ -635,6 +773,18 @@ class SignalClient:
         """
         import json as _json
 
+        args = ["receive", "--timeout", str(timeout)]
+        if max_messages:
+            args += ["--max-messages", str(max_messages)]
+        for flag, on in (
+            ("--ignore-attachments", ignore_attachments),
+            ("--ignore-stories", ignore_stories),
+            ("--ignore-avatars", ignore_avatars),
+            ("--ignore-stickers", ignore_stickers),
+        ):
+            if on:
+                args.append(flag)
+
         RECEIVE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
         RECEIVE_LOCK_FILE.write_text(str(os.getpid()))
         try:
@@ -642,8 +792,7 @@ class SignalClient:
             await asyncio.sleep(0.5)
 
             proc = await asyncio.create_subprocess_exec(
-                "signal-cli", "-u", self.account, "-o", "json",
-                "receive", "--timeout", str(timeout),
+                "signal-cli", "-u", self.account, "-o", "json", *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
