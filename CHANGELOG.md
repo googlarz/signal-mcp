@@ -2,6 +2,20 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [1.41.0] — 2026-10-05
+
+### Added
+
+- **Italic and spoiler formatting** in `send_note_to_self`: `*italic*` (or `_italic_`) and `||spoiler||`, next to the existing `**bold**`, `~~strikethrough~~` and `` `monospace` ``. Lookalikes stay plain text (`snake_case_name`, `2 * 3 * 4`, `* bullet` lists, URLs with underscores). Style ranges are still counted in UTF-16 code units, so emoji before a marker don't shift it.
+
+### Changed
+
+- README: says plainly that signal-cli is an unofficial third-party client and that this project is not affiliated with Signal.
+
+### Known limitation
+
+- Only `send_note_to_self` parses these markers. `send_message` and `send_group_message` send text as written.
+
 ## [1.40.1] — 2026-10-05
 
 ### Fixed

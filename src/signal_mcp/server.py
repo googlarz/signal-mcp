@@ -199,7 +199,7 @@ TOOLS = [
             "The note is synced across all your linked Signal devices. "
             "Useful for saving reminders, bookmarks, or drafts that sync to your phone. "
             "message supports lightweight markdown for Signal's native rich text: "
-            "**bold**, ~~strikethrough~~, `monospace` — use it to visually distinguish "
+            "**bold**, *italic*, ~~strikethrough~~, `monospace`, ||spoiler|| — use it to visually distinguish "
             "different kinds of notes (e.g. a bold title per note) instead of plain text blobs. "
             "Pass attachments (e.g. a QR code image) and quote_author/quote_timestamp "
             "(to thread a follow-up under a previous note, from a prior send_note_to_self result) "
@@ -208,7 +208,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "message": {"type": "string", "description": "Note text to save. Supports **bold**, ~~strikethrough~~, `monospace`"},
+                "message": {"type": "string", "description": "Note text to save. Supports **bold**, *italic*, ~~strikethrough~~, `monospace`, ||spoiler||"},
                 "attachments": {
                     "type": "array",
                     "description": "File paths to attach (e.g. a QR code or screenshot)",

@@ -5,15 +5,26 @@ Signal (via signal-cli's `textStyle` send param) supports rich text as
 counted in UTF-16 code units (not Python codepoints — matters for text
 containing emoji or other characters outside the Basic Multilingual Plane).
 
-This module lets callers write **bold**, ~~strikethrough~~, and `monospace`
-inline in note text; parse_styled_text() strips the markers and returns the
-plain text plus the style ranges to pass as the `textStyle` RPC param.
+This module lets callers write **bold**, *italic* (or _italic_), ~~strikethrough~~,
+`monospace` and ||spoiler|| inline in note text; parse_styled_text() strips the
+markers and returns the plain text plus the style ranges to pass as the
+`textStyle` RPC param.
 """
 
 import re
 
-_MARKER_RE = re.compile(r"\*\*(.+?)\*\*|~~(.+?)~~|`(.+?)`", re.DOTALL)
-_STYLES = ("BOLD", "STRIKETHROUGH", "MONOSPACE")  # group index -> style name
+# Group order must match _STYLES. Italic markers refuse to match inside words or around
+# whitespace, so "snake_case_name", "2 * 3 * 4" and "* bullet" stay literal text.
+_MARKER_RE = re.compile(
+    r"\*\*(.+?)\*\*"
+    r"|~~(.+?)~~"
+    r"|`(.+?)`"
+    r"|\|\|(.+?)\|\|"
+    r"|(?<![\w*])\*(?![\s*])(.+?)(?<![\s*])\*(?![\w*])"
+    r"|(?<!\w)_(?![\s_])(.+?)(?<![\s_])_(?!\w)",
+    re.DOTALL,
+)
+_STYLES = ("BOLD", "STRIKETHROUGH", "MONOSPACE", "SPOILER", "ITALIC", "ITALIC")
 
 
 def _utf16_len(s: str) -> int:
@@ -21,7 +32,7 @@ def _utf16_len(s: str) -> int:
 
 
 def parse_styled_text(text: str) -> tuple[str, list[str]]:
-    """Strip **bold**/~~strike~~/`mono` markers, returning (plain_text, textStyle ranges).
+    """Strip **bold**/*italic*/~~strike~~/`mono`/||spoiler|| markers, returning (plain_text, textStyle ranges).
 
     Markers don't nest; the first-matching marker wins for any given span.
     """
