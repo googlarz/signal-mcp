@@ -660,12 +660,22 @@ TOOLS = [
     ),
     Tool(
         name="get_own_number",
-        description="Get your own Signal phone number (the account this server is running as)",
+        description=(
+            "Return this server's own Signal account number as {number} (E.164, e.g. +4915112345678). "
+            "Local lookup: no network call, no daemon needed, no side effects. "
+            "Use it to know which messages are your own (sender == number) or to address send_note_to_self; "
+            "use list_accounts instead to see every account registered in signal-cli on this machine."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="store_stats",
-        description="Get statistics about locally stored messages (count, unread count, DB size on disk, date range)",
+        description=(
+            "Report statistics about signal-mcp's local message database (~/.local/share/signal-mcp/messages.db). "
+            "Returns {total_messages, unread_messages (incoming only), db_size_bytes, oldest, newest} with oldest/newest as ISO datetimes or null when empty. "
+            "Read-only, local only, no daemon needed. "
+            "Use it to check whether history has been imported (import_desktop / sync_desktop) or before cleaning up with prune_store, delete_local_messages or clear_local_store."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -687,12 +697,26 @@ TOOLS = [
     ),
     Tool(
         name="import_desktop",
-        description="Full one-time import of all historical messages from Signal Desktop (macOS/Linux). Requires sqlcipher. On macOS prompts for Keychain access; on Linux uses libsecret/GNOME Keyring. For ongoing sync use sync_desktop instead.",
+        description=(
+            "Import the full message history from Signal Desktop on this machine into signal-mcp's local store, so get_conversation, search_messages and export_messages can see older messages. "
+            "No parameters. Reads Signal Desktop's encrypted database, which needs sqlcipher installed and the database key: on macOS read from the Keychain ('Signal Safe Storage', may prompt for access), on Linux via secret-tool (libsecret / GNOME Keyring). "
+            "Signal Desktop must be installed and opened at least once. Only writes to the local store; nothing is sent to Signal. "
+            "Already stored messages are skipped, so re-running is safe but slow. Only one import can run at a time. "
+            "Returns {imported, skipped, total, max_ts_ms, platform, source}. "
+            "Use sync_desktop for later updates; it only reads messages newer than the last sync."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="sync_desktop",
-        description="Incremental sync from Signal Desktop: imports only messages newer than the last sync. Fast on repeat calls. On first call behaves like import_desktop (imports everything). Requires sqlcipher.",
+        description=(
+            "Incrementally import new messages from Signal Desktop into signal-mcp's local store: only messages newer than the last sync (with a 60-second overlap) are read, so repeat calls are fast. "
+            "No parameters. The first call imports everything, like import_desktop. "
+            "Same requirements as import_desktop: sqlcipher, Signal Desktop installed, and Keychain (macOS) or secret-tool (Linux) access to its key. "
+            "Only writes to the local store; duplicates are skipped. "
+            "Returns the import_desktop fields {imported, skipped, total, max_ts_ms, platform, source} plus since (ISO datetime of the lower bound, null on first run) and incremental (boolean). "
+            "Use import_desktop only for a deliberate full re-scan."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -1207,7 +1231,14 @@ TOOLS = [
 TOOLS += [
     Tool(
         name="clear_local_store",
-        description="Delete ALL locally stored messages from the signal-mcp database. This does NOT delete messages from Signal — only from the local store. Requires confirm=true.",
+        description=(
+            "Delete ALL messages and attachment records from signal-mcp's local database. "
+            "confirm (boolean, required) must be exactly true, otherwise nothing is deleted and an error is returned. "
+            "Local only: nothing is deleted from Signal, your phone or other devices, and downloaded attachment files on disk are left in place. "
+            "Irreversible except by re-importing (import_desktop) or receiving again. "
+            "Returns {deleted: count, status: 'cleared'}. "
+            "Use delete_local_messages to clear one conversation, prune_store to drop only old messages; delete_message unsends a message in Signal."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1218,7 +1249,13 @@ TOOLS += [
     ),
     Tool(
         name="delete_local_messages",
-        description="Delete locally stored messages for one contact or group. Does NOT unsend from Signal — only removes from local store.",
+        description=(
+            "Delete the locally stored messages of one conversation from signal-mcp's database. "
+            "recipient (required): the contact's E.164 phone number or the group ID; your own number deletes only your note-to-self messages. "
+            "Local only: nothing is unsent from Signal or removed from other devices; irreversible locally. "
+            "Returns {deleted: count, status: 'deleted'} (0 if nothing matched). "
+            "Use clear_local_store to wipe everything, prune_store to drop messages by age, delete_message to unsend in Signal."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1230,14 +1267,12 @@ TOOLS += [
     Tool(
         name="export_messages",
         description=(
-            "Export locally stored messages as a JSON or CSV string for archiving, analysis, or migration. "
-            "Returns all messages in the local store by default; use recipient to restrict to one conversation. "
-            "Use since (ISO 8601 datetime) to export only messages after a given point in time. "
-            "JSON output preserves all fields (sender, timestamp, body, group_id); "
-            "CSV output is flat and suitable for spreadsheets. "
-            "Only messages already in the local store are included — messages never received on this device are absent. "
-            "Use when you need a full or filtered dump of conversation history in machine-readable form. "
-            "Do NOT use to read individual messages interactively — use get_conversation or search_messages for that."
+            "Export messages from signal-mcp's local store as one JSON or CSV string, for archiving or analysis. "
+            "format: 'json' (default; full message objects with resolved sender_name/group_name, attachments and extras) or 'csv' (flat columns id, timestamp, sender, sender_name, recipient, group_id, group_name, body, quote_id, is_read). "
+            "recipient (optional): limit to one conversation, an E.164 phone number or a group ID. "
+            "since (optional, ISO 8601 datetime, e.g. '2026-01-01T00:00:00'): only messages at or after it; an invalid value returns an error. "
+            "Read-only. Only messages already in the local store are included (run sync_desktop or receive_messages first). "
+            "Returns {format, data}. Use get_conversation or search_messages to read messages interactively."
         ),
         inputSchema={
             "type": "object",
@@ -1251,18 +1286,14 @@ TOOLS += [
     Tool(
         name="update_configuration",
         description=(
-            "Update Signal account-wide messaging settings. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "read_receipts controls whether Signal tells senders when you have read their messages. "
-            "typing_indicators controls whether contacts see the '...' indicator when you are composing. "
-            "link_previews controls whether URLs in outgoing messages generate inline previews. "
-            "unidentified_delivery_indicators controls whether sealed-sender delivery icons are shown. "
-            "All parameters are optional — omit any setting you do not want to change. "
-            "Changes take effect immediately and persist across sessions. "
-            "signal-cli has no way to read back current values — track what you've set yourself if needed. "
-            "Use update_account for account-level privacy settings (discoverability, username). "
-            "Do NOT use to change your profile name or photo — use update_profile for that."
+            "Change account-wide messaging settings and sync them to your linked devices. All four booleans are optional; omit any you do not want to change, and a call with none is a no-op: "
+            "read_receipts whether senders are told when you have read their messages; "
+            "typing_indicators whether contacts see you typing; "
+            "link_previews whether URLs in outgoing messages get previews; "
+            "unidentified_delivery_indicators whether sealed-sender delivery icons are shown. "
+            "Primary device only: on a linked signal-cli setup it fails with 'This command doesn't work on linked devices'. "
+            "Returns {status: 'updated'}. signal-cli cannot read the current values back, so track what you set. "
+            "Use update_account for discoverability, number sharing and username; update_profile for name and avatar."
         ),
         inputSchema={
             "type": "object",
@@ -1277,20 +1308,22 @@ TOOLS += [
     Tool(
         name="list_sticker_packs",
         description=(
-            "List all sticker packs installed on this Signal account. "
-            "Returns pack_id and sticker_id values needed for send_sticker and send_group_sticker. "
-            "Use add_sticker_pack to install a new pack from a signal.art URL."
+            "List the sticker packs installed on this Signal account. "
+            "No parameters. Returns signal-cli's array of packs: {packId (hex), url, installed, title, author, cover, stickers: [{id, emoji, contentType}]}. "
+            "Read-only. Use packId and a sticker id with send_sticker, send_group_sticker or get_sticker. "
+            "Use add_sticker_pack to install a pack from a signal.art link."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="add_sticker_pack",
         description=(
-            "Install a Signal sticker pack from a signal.art URL. "
-            "Returns {status, pack_id} — pack_id is parsed from the URI, ready to pass directly to "
-            "get_sticker or send_sticker/send_group_sticker without a separate list_sticker_packs call. "
-            "Use list_sticker_packs instead if you need to browse the pack's sticker_id/emoji contents first. "
-            "The URI must be a signal.art URL in the format: https://signal.art/addstickers/#pack_id=...&pack_key=..."
+            "Install an existing sticker pack on this Signal account from its signal.art link. "
+            "uri (required): https://signal.art/addstickers/#pack_id=<hex>&pack_key=<hex>; both pack_id and pack_key are needed. "
+            "Installing the same pack again has no further effect. "
+            "Returns {status: 'installed', pack_id} with pack_id parsed from the uri, ready for send_sticker, send_group_sticker or get_sticker; "
+            "call list_sticker_packs to see the sticker ids and emoji in it. "
+            "Use upload_sticker_pack instead to publish a new pack of your own images."
         ),
         inputSchema={
             "type": "object",
@@ -1369,26 +1402,21 @@ TOOLS += [
     Tool(
         name="list_attachments",
         description=(
-            "List all Signal attachments that have been downloaded and saved to the local store. "
-            "Returns filenames, MIME types, file sizes, and the associated message timestamp for each attachment. "
-            "Only attachments explicitly downloaded (via receive_messages or import) appear here — "
-            "attachments not yet fetched from Signal's servers are not listed. "
-            "Use the returned filename with get_attachment to retrieve the actual file content. "
-            "Use when you need to discover what media files are available locally before reading them. "
-            "Do NOT use to download new attachments from Signal servers — use receive_messages for that."
+            "List the attachment files saved in the local attachments folder (~/Downloads/signal-attachments). "
+            "No parameters. Returns an array of {filename, path, size (bytes), modified (ISO datetime)}, sorted by filename; empty if the folder does not exist. "
+            "Read-only and local; nothing is downloaded. "
+            "Pass a filename to get_attachment for its details. Attachments of incoming messages land here when messages are received (receive_messages or the background service)."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="get_attachment",
         description=(
-            "Retrieve metadata and the base64-encoded content of a locally saved Signal attachment by filename. "
-            "Returns MIME type, file size, local path, and the raw bytes as base64 so the caller can read or display the file. "
-            "If the file is not in the local attachments folder, it is fetched by attachment id from "
-            "signal-cli's own attachment store (only attachments signal-cli already downloaded) and saved locally. "
-            "Use list_attachments to discover available filenames before calling. "
-            "Use when you need to read, display, or forward the contents of a received file or image. "
-            "Do NOT use to send an attachment — use send_attachment or send_group_attachment for that."
+            "Look up one received attachment and make sure it is saved locally. "
+            "filename (required): a filename from list_attachments, or a signal-cli attachment id from a message's attachments; path components such as '../' are rejected. "
+            "If the file is not in ~/Downloads/signal-attachments, it is copied there from signal-cli's own attachment store (only attachments signal-cli already downloaded; otherwise 'Attachment not found'). "
+            "Returns {filename, path, size (bytes), modified (ISO datetime)}: metadata and the local path, not the file content. Nothing is sent to Signal. "
+            "Use send_attachment or send_group_attachment to send a file."
         ),
         inputSchema={
             "type": "object",
@@ -1400,7 +1428,12 @@ TOOLS += [
     ),
     Tool(
         name="get_sticker",
-        description="Retrieve a single sticker image as base64. Use list_sticker_packs to find pack_id and sticker_id values.",
+        description=(
+            "Fetch one sticker image from an installed pack as base64. "
+            "pack_id (required, hex string) and sticker_id (required, integer) come from list_sticker_packs (packId and stickers[].id) or add_sticker_pack. "
+            "Read-only. Returns {base64}; the image format is the sticker's contentType from list_sticker_packs (usually image/webp). "
+            "Use send_sticker or send_group_sticker to send it instead of downloading it."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -1413,14 +1446,12 @@ TOOLS += [
     Tool(
         name="upload_sticker_pack",
         description=(
-            "Package and publish a sticker pack to Signal's CDN from local image files. "
-            "Accepts a local manifest.json describing the pack, or a zip archive containing both the manifest and images. "
-            "Signal's CDN stores the pack and returns a signal.art install URL you can share with others. "
-            "Recipients call add_sticker_pack with the URL to install the pack and send its stickers. "
-            "After publishing, the pack is available on Signal's network indefinitely. "
-            "Use when you want to create and distribute a custom sticker pack. "
-            "Use add_sticker_pack to install an existing pack for sending. "
-            "Do NOT use to install a pack — use add_sticker_pack for that."
+            "Publish a new sticker pack made from your own images to Signal's servers and get a shareable signal.art link. "
+            "path (required): local path to a manifest.json (with the sticker images next to it) or to a zip containing the manifest and images. "
+            "The file must be inside an allowed folder (~/Downloads/signal-attachments, ~/Downloads, ~/Desktop, ~/Documents, or the SIGNAL_MCP_SEND_ROOTS list) and not in a hidden folder. "
+            "The pack is public to anyone with the link and cannot be deleted through this tool. "
+            "Invalid packs or oversized images return an error. Returns {url}. "
+            "Use add_sticker_pack to install an existing pack."
         ),
         inputSchema={
             "type": "object",
@@ -1433,23 +1464,25 @@ TOOLS += [
     Tool(
         name="list_accounts",
         description=(
-            "List all Signal accounts (phone numbers) registered in signal-cli on this machine. "
-            "Returns each account's E.164 phone number and its registration status. "
-            "Most setups have a single account; multiple accounts appear when signal-cli manages more than one number. "
-            "Use get_own_number to get the active account's number in single-account setups. "
-            "Use when you need to confirm which accounts are available before sending or receiving messages."
+            "List every Signal account registered in signal-cli on this machine. "
+            "Returns a JSON array of E.164 phone numbers (e.g. [\"+4915112345678\"]); no registration status or other fields. "
+            "Read-only, asks the running signal-cli daemon. Most setups have exactly one account. "
+            "Use get_own_number instead to get the single account this server sends and receives as."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="update_account",
         description=(
-            "Update Signal account-level privacy and identity settings. "
-            "All parameters are optional — only provide the settings you want to change. "
-            "discoverable_by_number controls whether others can find you by phone number. "
-            "number_sharing controls whether your number is shared with contacts you message. "
-            "username sets a @username alias; delete_username removes it. "
-            "Use update_configuration for messaging settings (read receipts, typing indicators)."
+            "Change account attributes stored on Signal's servers for this account. All six parameters are optional and only the ones you pass are sent: "
+            "device_name (string) renames this device as shown in list_devices on your other devices; "
+            "discoverable_by_number (boolean) whether people who have your number can find you on Signal; "
+            "number_sharing (boolean) whether your phone number is shown to people you message; "
+            "unrestricted_unidentified_sender (boolean) true lets anyone, not only contacts, send you sealed-sender messages; "
+            "username (string, without @) claims a Signal username; delete_username (boolean) removes the current one and takes precedence over username if both are given. "
+            "Takes effect immediately on the real account; setting a username that is taken or invalid fails with an error. "
+            "Returns {status: 'account updated'} (the resulting username is not echoed). "
+            "Use update_configuration for read receipts, typing indicators and link previews, update_profile for your name, about text and avatar."
         ),
         inputSchema={
             "type": "object",
@@ -1466,15 +1499,12 @@ TOOLS += [
     Tool(
         name="set_pin",
         description=(
-            "Set a Signal Registration Lock PIN to protect your account against SIM-swap and unauthorized re-registration. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "Once set, anyone attempting to re-register your phone number on Signal must provide this PIN. "
-            "The PIN must be 4–20 digits. Signal also uses the PIN to derive your storage encryption key. "
-            "If you forget the PIN, you must wait 7 days for the lock to expire before re-registering. "
-            "Use when you want to harden your account against SIM-swap attacks. "
-            "Use remove_pin to disable the lock. "
-            "Do NOT set a PIN you might forget — losing it locks you out of your account for 7 days."
+            "Set or replace the Registration Lock PIN on your Signal account, so re-registering your phone number elsewhere (e.g. after a SIM swap) requires this PIN. "
+            "pin (string, required): the new PIN, numeric, e.g. '123456'. "
+            "Primary device only: on a linked signal-cli setup it fails with 'This command doesn't work on linked devices'. "
+            "Affects the real account immediately; calling again with a new pin replaces the old one. "
+            "If you forget it, re-registration is blocked until the lock lapses after 7 days of inactivity. "
+            "Returns {status: 'PIN set'}. Use remove_pin to turn the lock off; finish_change_number needs this PIN when changing numbers."
         ),
         inputSchema={
             "type": "object",
@@ -1487,29 +1517,24 @@ TOOLS += [
     Tool(
         name="remove_pin",
         description=(
-            "Remove the Signal Registration Lock PIN, disabling re-registration protection on this account. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "After removal, anyone who controls your phone number can re-register Signal without a PIN. "
-            "Use only if you intentionally want to disable the registration lock. "
-            "Use set_pin to set a new PIN instead of removing the existing one. "
-            "Do NOT remove the PIN if you rely on it as a security measure against SIM-swap attacks."
+            "Remove the Registration Lock PIN from your Signal account, so anyone who controls your phone number can re-register it without a PIN. "
+            "No parameters. "
+            "Primary device only: on a linked signal-cli setup it fails with 'This command doesn't work on linked devices'. "
+            "Affects the real account immediately; undo it by calling set_pin again. "
+            "Returns {status: 'PIN removed'}. Use set_pin to change the PIN instead of removing it."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="start_change_number",
         description=(
-            "Begin migrating your Signal account to a new phone number. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "Signal sends a 6-digit verification code to the new number via SMS (or voice call if voice=true). "
-            "After calling this tool, call finish_change_number with the new number and received code to complete the migration. "
-            "If Signal rejects the request due to rate limits, provide a captcha token obtained from "
-            "https://signalcaptchas.org/challenge/generate.html. "
-            "The account remains on the old number until finish_change_number succeeds. "
-            "Use finish_change_number immediately after receiving the SMS code to complete the change. "
-            "Do NOT call finish_change_number without first calling this tool — the verification code will not exist."
+            "Step 1 of moving this Signal account to a new phone number: asks Signal to send a verification code to the new number. "
+            "number (required): the new number in E.164 format, e.g. +12025551234; "
+            "voice (boolean, default false): deliver the code by voice call instead of SMS; "
+            "captcha (optional): a captcha token, needed only when a previous attempt failed with a captcha-required error; solve one at https://signalcaptchas.org/registration/generate.html and pass the resulting signalcaptcha:// token. "
+            "Primary device only: on a linked signal-cli setup it fails with 'This command doesn't work on linked devices'. "
+            "The account stays on the old number until finish_change_number succeeds. Rate limits are returned as errors. "
+            "Returns {status: 'verification code sent', number}. Then call finish_change_number with the same number and the received code."
         ),
         inputSchema={
             "type": "object",
@@ -1524,16 +1549,14 @@ TOOLS += [
     Tool(
         name="finish_change_number",
         description=(
-            "Complete the second step of a Signal phone number change by submitting the verification code. "
-            "Only works when signal-mcp is the account's primary device — fails with "
-            "'This command doesn't work on linked devices' if signal-mcp was set up via signal-cli link. "
-            "Must be called after start_change_number, which initiates the number change and triggers the SMS/voice code. "
-            "number is the new E.164 phone number you are migrating to. "
-            "verification_code is the 6-digit code received via SMS or voice call to that number. "
-            "pin is required only if your account has a Signal Registration Lock PIN set — omit otherwise. "
-            "On success, the account is permanently migrated to the new number; all linked devices are updated. "
-            "Use start_change_number first to request the verification code before calling this tool. "
-            "Do NOT call this tool without first calling start_change_number — the code will not exist."
+            "Step 2 of moving this Signal account to a new phone number: submits the verification code and completes the change. "
+            "Call start_change_number first; without it there is no code to verify. "
+            "number (required): the same new E.164 number given to start_change_number; "
+            "verification_code (required): the 6-digit code received by SMS or voice call; "
+            "pin (optional): your Registration Lock PIN, needed only if one is set (see set_pin). "
+            "Primary device only: on a linked signal-cli setup it fails with 'This command doesn't work on linked devices'. "
+            "On success the real account is moved to the new number; this cannot be undone except by another change-number round. "
+            "A wrong pin fails with the number of tries remaining. Returns {status: 'number changed', number}."
         ),
         inputSchema={
             "type": "object",
@@ -1548,9 +1571,13 @@ TOOLS += [
     Tool(
         name="submit_rate_limit_challenge",
         description=(
-            "Unblock the account after Signal applies a rate limit. "
-            "Provide the challenge token from the error and a solved captcha from "
-            "https://signalcaptchas.org/challenge/generate.html"
+            "Lift a Signal rate limit on sending by submitting a proof-of-humanity challenge. "
+            "Use it when a send fails with a rate-limit / proof-required error that includes a challenge token. "
+            "challenge (required): the challenge token from that error; "
+            "captcha (required): the token from solving the captcha at https://signalcaptchas.org/challenge/generate.html. "
+            "Talks to Signal's servers; a rejected captcha returns an error and you need a fresh one. "
+            "Returns {status: 'challenge submitted'}; then retry the failed send. "
+            "For a captcha needed while changing number, pass it to start_change_number instead."
         ),
         inputSchema={
             "type": "object",
@@ -1564,9 +1591,11 @@ TOOLS += [
     Tool(
         name="prune_store",
         description=(
-            "Delete locally stored messages older than a given number of days (default: 180). "
-            "Does NOT delete messages from Signal servers — only the local history cache. "
-            "Useful for keeping the store from growing unbounded."
+            "Delete locally stored messages older than a number of days from signal-mcp's database, together with their attachment records and search index entries. "
+            "days (integer, default 180, must be positive): messages with a timestamp older than now minus this many days are deleted. "
+            "Local only: nothing is deleted from Signal; irreversible locally. "
+            "Returns {deleted: count, older_than_days}. "
+            "Use it to keep the store small; use delete_local_messages for one conversation or clear_local_store to wipe everything."
         ),
         inputSchema={
             "type": "object",
@@ -1578,10 +1607,11 @@ TOOLS += [
     Tool(
         name="set_webhook",
         description=(
-            "Configure a webhook URL that receives a POST request for every incoming Signal message. "
-            "The payload is a JSON object with fields: event, timestamp, sender, recipient, group_id, body, attachments, quote_id. "
-            "Use this to connect signal-mcp to n8n, Make, Home Assistant, or any local HTTP endpoint. "
-            "Pass url=null to disable webhooks. The URL is saved to disk and persists across restarts."
+            "Save or clear the webhook URL that signal-mcp's background receiver (signal-mcp receive --watch, run by install-service) POSTs every incoming message to. "
+            "url (optional): an http(s) URL such as 'http://localhost:5678/webhook/signal'; omit it or pass null/empty to clear. "
+            "Stored in ~/.local/share/signal-mcp/webhook.json; the receiver reads it at startup, so restart the service for a change to apply. The SIGNAL_MCP_WEBHOOK environment variable overrides it. "
+            "Payload: JSON {event: 'message', timestamp, sender, recipient, group_id, body, quote_id, attachments, is_read, receipt_type, expires_in_seconds, view_once}. "
+            "Returns {status: 'webhook set', url} or {status: 'webhook cleared'}. Use get_webhook to check the value in effect."
         ),
         inputSchema={
             "type": "object",
@@ -1592,7 +1622,11 @@ TOOLS += [
     ),
     Tool(
         name="get_webhook",
-        description="Return the currently configured webhook URL, or null if none is set.",
+        description=(
+            "Return the webhook URL in effect as {url}, or {url: null} if none is configured. "
+            "No parameters. The SIGNAL_MCP_WEBHOOK environment variable wins over the URL saved with set_webhook. "
+            "Read-only, local only. Use set_webhook to change or clear it."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -1614,10 +1648,13 @@ TOOLS += [
     Tool(
         name="schedule_message",
         description=(
-            "Schedule a message to be sent at a specific future time. "
-            "The message will be delivered when the background service runs (install-service) "
-            "or when run_scheduled_messages is called manually. "
-            "Returns the scheduled job ID — use cancel_scheduled_message to cancel it."
+            "Save a text message in the local store to be sent at a future time. "
+            "Give exactly one target: recipient (E.164 phone number, for a direct message) or group_id (for a group). "
+            "message (required): the text. "
+            "send_at (required): local time as 'YYYY-MM-DDTHH:MM[:SS]' or 'YYYY-MM-DD HH:MM[:SS]' (no timezone); must be in the future. "
+            "Nothing is sent at that time by itself: a due message goes out only when run_scheduled_messages (or the `signal-mcp run-scheduled` CLI, e.g. from cron) runs. "
+            "Returns {job_id, send_at, status: 'scheduled'}. "
+            "Use list_scheduled_messages to review jobs and cancel_scheduled_message to cancel one; use send_message or send_group_message to send now."
         ),
         inputSchema={
             "type": "object",
@@ -1633,9 +1670,10 @@ TOOLS += [
     Tool(
         name="list_scheduled_messages",
         description=(
-            "List pending scheduled messages. "
-            "Returns scheduled jobs with their ID, recipient, send time, and status. "
-            "Use cancel_scheduled_message to cancel a pending job."
+            "List messages scheduled with schedule_message, ordered by send time. "
+            "include_done (boolean, default false): also include jobs that were sent, cancelled or failed; by default only pending jobs are listed. "
+            "Read-only, local only. Returns an array of {id, recipient, group_id, message, send_at, created_at, status ('pending'|'sent'|'cancelled'|'failed'), error}. "
+            "Use the id with cancel_scheduled_message; run_scheduled_messages sends the pending jobs that are due."
         ),
         inputSchema={
             "type": "object",
@@ -1647,9 +1685,10 @@ TOOLS += [
     Tool(
         name="cancel_scheduled_message",
         description=(
-            "Cancel a pending scheduled message by its job ID. "
-            "Use list_scheduled_messages to find the ID. "
-            "Returns an error if the message was already sent or does not exist."
+            "Cancel one pending scheduled message so it will never be sent. "
+            "job_id (required, integer): the id from schedule_message or list_scheduled_messages. "
+            "Local only; the job stays in the list with status 'cancelled' and cannot be re-activated (schedule it again instead). "
+            "Returns {status: 'cancelled', job_id}, or an error if no pending job has that id (already sent, failed, cancelled or unknown)."
         ),
         inputSchema={
             "type": "object",
@@ -1662,12 +1701,11 @@ TOOLS += [
     Tool(
         name="run_scheduled_messages",
         description=(
-            "Process and send any scheduled messages that are currently due. "
-            "The background service calls this automatically, but you can also call it manually "
-            "to deliver messages immediately without waiting for the next service run. "
-            "Safe to call anytime, including when nothing is due (returns processed=0). "
-            "Returns {processed: count, results: [{id, status: 'sent'|'failed', timestamp or error}, ...]} "
-            "— one entry per job that was due, from list_scheduled_messages' job IDs."
+            "Send every scheduled message whose send_at time has passed and is still pending. "
+            "No parameters. Nothing else delivers scheduled messages, so call this (or run `signal-mcp run-scheduled` from cron) after their time; due messages are sent late, never dropped. "
+            "Each due job is sent once as a real Signal message and marked 'sent' or 'failed' (failed jobs are not retried). Safe to call when nothing is due. "
+            "Returns {processed: count, results: [{id, status: 'sent', timestamp} or {id, status: 'failed', error}]}. "
+            "Use schedule_message to add jobs and list_scheduled_messages to inspect them."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
