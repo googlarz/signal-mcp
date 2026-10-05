@@ -2,6 +2,33 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [Unreleased]
+
+Closes the gap between signal-cli and the MCP tools: a command-by-command and field-by-field comparison found that signal-mcp discarded most incoming-message data and exposed only part of several commands' options.
+
+### Added
+
+- **Incoming messages keep everything signal-cli reports**: `mentions` (plus `body_resolved` with `@name` in place of the placeholder; UTF-16 offsets handled), `text_styles`, link `previews`, full `quote` (author, text), `voice_note`, `sticker`, `payment`, shared contacts, polls (`poll_create` / `poll_vote` / `poll_terminate`), pins/unpins, story replies, and event flags. Stored in one new nullable `extras` JSON column, added by a guarded migration (existing databases keep working).
+- **Group member labels**: `list_groups` returns each member's `label` / `label_emoji`; `update_group` sets your own (`member_label`, `member_label_emoji`). Also exposed: pending, requesting and banned members, permissions, invite link, termination state, and a `group_id` filter.
+- **`update_group`**: avatar, ban/unban, reset invite link, the three permission settings. `create_group` takes an avatar.
+- **`terminate_group`** (new, irreversible, requires `confirm: true`) and **`send_story`** (new).
+- **Contacts and profile**: nickname, note, username, archived/hidden/unregistered and more on contacts; `update_contact` (given/family/nick names, note), `update_profile` (given/family name, about emoji, MobileCoin address), `remove_contact` (`forget`, `hide`), `get_user_status` by username, typing indicators in groups. `list_contacts` / `find_contact` take `all_recipients`, and the name cache now uses it, so group members who are not in your address book resolve to their profile names instead of a bare UUID.
+- **Sending**: link previews, voice-note flag, quoted text/mentions/styles, `no_urgent`, `notify_self`, `end_session`, send by username, story replies; `max_messages` and `ignore_*` for `receive_*`.
+- **`get_attachment`** falls back to signal-cli's `getAttachment` when the file is not in the local folder.
+
+### Fixed
+
+- **Received attachments were never copied.** signal-cli's `filename` is the sender's original name, not a path; the file lives in `~/.local/share/signal-cli/attachments/<id>`. The store held 0 attachment rows next to 60 files on disk. Now copied by id (path-traversal safe) and the id is kept.
+- **Replies sent an empty quote.** signal-cli builds the quote text from `quoteMessage`; replies now look the original up in the local store.
+- **`leave_group` could not work for a sole admin** (signal-cli requires naming a successor).
+- **`update_group(link_mode="reset")`** sent a value signal-cli rejects; it now sends `resetLink`.
+- **Typing "stop" never stopped typing**, `list_identities` ignored its number filter, and `update_profile`'s `name` was silently dropped (signal-cli only reads `givenName`).
+- **Incoming remote/admin deletes were stored as empty messages.** They now flag the original (`remote_deleted`, `admin_deleted_by`) and keep your local copy.
+
+### Changed
+
+- A contact's display name prefers the Signal nickname, then the contact name, then the profile name.
+
 ## [1.39.0] — 2026-09-30
 
 ### Added

@@ -244,15 +244,18 @@ write access to your real Signal account.
 | `update_profile` | Update your own name, about text, or avatar. |
 | `get_own_number` | Get the Signal number this server is running as. |
 
+> **Message output** now carries everything signal-cli reports for incoming messages, when present: `mentions` (with `body_resolved`, the text with `@name` in place of the placeholder), `text_styles`, `previews`, `quote` (author and text), `voice_note`, `sticker`, polls (`poll_create` / `poll_vote` / `poll_terminate`), pins, story replies and shared contacts. Remote and admin deletes flag the stored message (`remote_deleted`, `admin_deleted_by`) instead of erasing your local copy.
+
 ### Groups
 
 | Tool | Description |
 |---|---|
-| `list_groups` | All groups with members and metadata. |
+| `list_groups` | All groups with members and metadata: member labels (`label`, `label_emoji`), pending/requesting/banned members, permissions, invite link. Optional `group_id` filter. |
 | `create_group` | Create a new Signal group. |
 | `join_group` | Join a group via invite link. |
-| `update_group` | Rename, add/remove members, promote/demote admins, set expiry timer. |
-| `leave_group` | Leave a group. |
+| `update_group` | Rename, add/remove members, promote/demote admins, set expiry timer, avatar, ban/unban, reset invite link, group permissions, and your own member label (`member_label`, `member_label_emoji` — only your own label can be set). |
+| `leave_group` | Leave a group. A sole admin must name a successor (`admins`); `delete` also removes the local group data. |
+| `terminate_group` | Permanently end a group for every member. Irreversible; requires `confirm: true`. |
 
 ### History & Search
 
@@ -305,7 +308,7 @@ write access to your real Signal account.
 | `import_desktop` | One-time full import of all historical messages from Signal Desktop. Requires sqlcipher. |
 | `sync_desktop` | Incremental sync from Signal Desktop — imports only messages newer than the last sync. Fast on repeat calls. First call behaves like `import_desktop`. |
 | `list_attachments` | List all locally downloaded attachments (photos, files received via Signal). |
-| `get_attachment` | Get details about a specific downloaded attachment by filename. |
+| `get_attachment` | Get details about a downloaded attachment by filename; if it is not in the local attachments folder it is fetched from signal-cli by attachment id. |
 | `clear_local_store` | Delete ALL locally stored messages (requires `confirm: true`). Does not unsend from Signal. |
 | `delete_local_messages` | Delete locally stored messages for one contact or group. |
 | `export_messages` | Export stored messages as JSON or CSV. Supports `recipient` and `since` filters. |
@@ -427,13 +430,13 @@ The daemon starts automatically on first use. Attachments are saved to `~/Downlo
 
 signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli.1.adoc). Here's what is and isn't covered:
 
-### Covered (71 tools)
+### Covered (81 tools)
 
 | signal-cli command | signal-mcp tool |
 |---|---|
 | `send` | `send_message`, `send_group_message`, `send_note_to_self`, `send_attachment`, `send_group_attachment`, `send_sticker`, `send_group_sticker` |
 | `receive` | `receive_messages` (streaming), `get_unread` |
-| `listContacts` | `list_contacts` |
+| `listContacts` | `list_contacts`, `find_contact` (`all_recipients` also returns non-contacts, e.g. other group members) |
 | `listGroups` | `list_groups` |
 | `listDevices` | `list_devices` |
 | `listIdentities` | `list_identities` |
@@ -457,6 +460,8 @@ signal-mcp wraps the [signal-cli JSON-RPC daemon](https://github.com/AsamK/signa
 | `sendAdminDelete` | `admin_delete_message` |
 | `sendPinMessage` / `sendUnpinMessage` | `pin_message` / `unpin_message` |
 | `sendPollCreate` / `sendPollVote` / `sendPollTerminate` | `create_poll` / `vote_poll` / `terminate_poll` |
+| `sendStory` | `send_story` |
+| `terminateGroup` | `terminate_group` |
 | `sendMessageRequestResponse` | `send_message_request_response` |
 | `remoteDelete` | `delete_message`, `delete_group_message` |
 | `editMessage` | `edit_message` |
@@ -482,9 +487,7 @@ These commands are deliberately excluded — either not feasible to implement as
 | `acceptCall` / `hangupCall` / `rejectCall` / `startCall` / `listCalls` | Voice/video calls require WebRTC and an active media stack — not feasible via MCP |
 | `register` / `verify` / `link` / `unregister` | One-time account setup; must be done before installing signal-mcp |
 | `deleteLocalAccountData` | Irreversibly destroys all local Signal data; too destructive to expose |
-| `sendPaymentNotification` | MobileCoin payments (requires a funded wallet; out of scope) |
-| `sendStory` | Added in signal-cli 0.14.6. Feasible, but consciously not added — no use case yet |
-| `terminateGroup` | Added in signal-cli 0.14.8 (GroupsV2 "end group"). Feasible, but consciously not added — irreversible for every member, so it would need a confirmation gate like `clear_local_store` |
+| `sendPaymentNotification` | Only forwards a MobileCoin receipt produced by an external wallet; signal-mcp cannot create or verify one |
 
 ## Development
 
