@@ -17,6 +17,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.2.0
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Install dependencies

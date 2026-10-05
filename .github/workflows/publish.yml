@@ -3,30 +3,45 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  workflow_dispatch:  # dry run: build and check the package, never publish
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - name: Build package
         run: uv build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
 
+  check:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Check package metadata and README rendering
+        run: uvx twine check dist/*
+
   publish:
+    if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write  # required for trusted publisher (OIDC)
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
