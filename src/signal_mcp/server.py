@@ -132,15 +132,23 @@ TOOLS = [
     Tool(
         name="send_message",
         description=(
-            "Send a text message to a Signal contact. The message is delivered end-to-end encrypted. "
-            "Returns the sent timestamp, which can be used as target_timestamp for react_to_message or edit_message. "
-            "To reply/quote a specific message, provide quote_author and quote_timestamp (get timestamps from get_conversation). "
-            "Address the contact by recipient (phone number) or username — exactly one. "
-            "Optional: a link preview card (preview_*), a story reply (story_*), no_urgent to skip the push notification. "
-            "Set formatting=true to turn **bold**, *italic*, ~~strikethrough~~, `monospace` and ||spoiler|| in the text into real "
-            "Signal formatting (markers are removed from the sent text); leave it off for text with literal asterisks or backticks. "
-            "end_session=true instead resets the encrypted session with the contact (message is ignored; troubleshooting only). "
-            "Use send_group_message for group chats, send_attachment for files/images."
+            'Send a text message to one Signal contact (end-to-end encrypted). Use send_group_message for groups, '
+            'send_attachment for files, send_note_to_self for your own Note to Self, schedule_message to send later. '
+            'Address the contact by recipient (E.164, e.g. +4915112345678) or username (alice.42 or a username link) — '
+            'exactly one, otherwise an error. message is the text; formatting=true turns **bold**, *italic*, '
+            '~~strikethrough~~, `monospace` and ||spoiler|| into real Signal formatting (markers removed; leave off for '
+            'literal asterisks/backticks). Reply/quote: quote_author (E.164) + quote_timestamp (ms) of the original; '
+            'quote_message (quoted text; default: looked up in the local store), quote_mentions ({start, length, '
+            "author}), quote_text_styles ('start:length:STYLE') and quote_attachments "
+            "('contentType[:filename[:previewFile]]') only shape the quote bubble. Link preview card: preview_url (must "
+            'also appear in the text), preview_title (needed for the card to render), preview_description, preview_image '
+            '(local file). Story reply: story_author (E.164, required with story_timestamp) + story_timestamp (ms). '
+            'no_urgent=true sends without a push notification; notify_self=true delivers a normal notifying message if '
+            'you are among the recipients. end_session=true instead resets the encrypted session (message ignored; '
+            "troubleshooting only). Contacts Signal's servers; not idempotent (repeating sends a duplicate); sends share "
+            'a 20-per-minute rate limit (calls wait rather than fail). The sent message is saved to the local store. '
+            'Returns {status, timestamp, recipient}; timestamp is the target_timestamp for edit_message, react_to_message'
+            ' or delete_message.'
         ),
         inputSchema={
             "type": "object",
@@ -161,18 +169,23 @@ TOOLS = [
     Tool(
         name="send_group_message",
         description=(
-            "Send a text message to a Signal group. The message is delivered end-to-end encrypted to all group members. "
-            "Returns the sent timestamp, which can be used as target_timestamp for react_to_message or edit_message. "
-            "To @mention a member, include their name in the message text and pass a mentions list where each entry has "
-            "start (character index of the mention in the text), length (character count), and author (E.164 phone number). "
-            "start/length are UTF-16 code units, not Unicode codepoints — an emoji before the mention shifts the offset by 2, not 1. "
-            "Set formatting=true to turn **bold**, *italic*, ~~strikethrough~~, `monospace` and ||spoiler|| in the text into real Signal "
-            "formatting (markers are removed from the sent text); with it, mention offsets refer to the text as you wrote it, markers "
-            "included, and are adjusted for you. Leave it off for text that contains literal asterisks or backticks. "
-            "To reply/quote a message, provide quote_author (sender's phone number) and quote_timestamp (from get_conversation). "
-            "Use list_groups to get group_id values. "
-            "Use send_group_attachment to send files or images to a group. "
-            "Do NOT use for direct messages to a contact — use send_message instead."
+            'Send a text message to a Signal group (end-to-end encrypted to all members). Use send_message for a single '
+            'contact, send_group_attachment for files. group_id comes from list_groups. message is the text. @mentions: '
+            'put the name in the text and pass mentions [{start, length, author (E.164)}]; start/length are UTF-16 code '
+            'units, not codepoints — an emoji before the mention shifts the offset by 2, not 1. formatting=true turns '
+            '**bold**, *italic*, ~~strikethrough~~, `monospace` and ||spoiler|| into real Signal formatting (markers are '
+            'removed from the sent text); with it, mention offsets refer to the text as you wrote it, markers included, '
+            'and are adjusted for you. Leave it off for text with literal asterisks or backticks. Reply/quote: '
+            'quote_author (E.164) + quote_timestamp (ms) of the original; quote_message (quoted text; default: looked up '
+            "in the local store), quote_mentions ({start, length, author}), quote_text_styles ('start:length:STYLE') and "
+            "quote_attachments ('contentType[:filename[:previewFile]]') only shape the quote bubble. Link preview card: "
+            'preview_url (must also appear in the text), preview_title (needed for the card to render), '
+            'preview_description, preview_image (local file). Story reply: story_author (E.164, required with '
+            'story_timestamp) + story_timestamp (ms). no_urgent=true sends without a push notification; notify_self=true '
+            "delivers a normal notifying message if you are among the recipients. Contacts Signal's servers; not "
+            'idempotent (repeating sends a duplicate); sends share a 20-per-minute rate limit (calls wait rather than '
+            'fail). The sent message is saved to the local store. Returns {status, timestamp, group_id}; timestamp is the'
+            ' target_timestamp for edit_message, react_to_message or delete_group_message.'
         ),
         inputSchema={
             "type": "object",
@@ -203,15 +216,17 @@ TOOLS = [
     Tool(
         name="send_note_to_self",
         description=(
-            "Send a note to yourself via Signal's 'Note to Self' / saved messages feature. "
-            "The note is synced across all your linked Signal devices. "
-            "Useful for saving reminders, bookmarks, or drafts that sync to your phone. "
-            "message supports lightweight markdown for Signal's native rich text: "
-            "**bold**, *italic*, ~~strikethrough~~, `monospace`, ||spoiler|| — use it to visually distinguish "
-            "different kinds of notes (e.g. a bold title per note) instead of plain text blobs. "
-            "Pass attachments (e.g. a QR code image) and quote_author/quote_timestamp "
-            "(to thread a follow-up under a previous note, from a prior send_note_to_self result) "
-            "to combine content in one message instead of separate calls."
+            'Send a message to your own Note to Self chat; it syncs to all your linked Signal devices. Use for reminders,'
+            ' bookmarks or drafts; use send_message to message anyone else. message always supports **bold**, *italic*, '
+            '~~strikethrough~~, `monospace`, ||spoiler|| (markers become Signal formatting) — e.g. a bold title per note.'
+            ' attachments: list of local file paths (e.g. a QR code); voice_note=true marks audio as a voice note. To '
+            'thread a follow-up under an earlier note pass quote_author (your own number) + quote_timestamp (from a prior'
+            ' send_note_to_self result); quote_message, quote_mentions, quote_text_styles, quote_attachments optionally '
+            'shape the quote bubble. Link preview card: preview_url (must also appear in the text), preview_title (needed'
+            ' for the card to render), preview_description, preview_image (local file). no_urgent=true sends without a '
+            'push notification; notify_self=true delivers a normal notifying message if you are among the recipients. '
+            'Combine content in one call rather than several. Not idempotent; shares the 20-sends-per-minute rate limit. '
+            'Saved to the local store. Returns {status, timestamp}.'
         ),
         inputSchema={
             "type": "object",
@@ -234,15 +249,14 @@ TOOLS = [
     Tool(
         name="edit_message",
         description=(
-            "Edit the text of a previously sent message. "
-            "Sends the edit via signal-cli to all original recipients; they see the updated text inline with an '(edited)' label. "
-            "Only the message text can be modified — attachments, quoted replies, and reactions are immutable. "
-            "The edit must reference the exact timestamp of the original message as returned by send_message or get_conversation. "
-            "Edits can only be made to messages you sent; editing someone else's message returns an error. "
-            "There is no enforced time limit, but Signal clients may ignore edits on very old messages. "
-            "Provide recipient for a DM edit or group_id for a group edit; exactly one is required. "
-            "Use when correcting a typo or updating information in a message you already sent. "
-            "Do NOT use to change who a message was sent to — send a new message instead."
+            "Replace the text of a message you already sent (DM or group); recipients see the new text with an '(edited)'"
+            ' label. Use to fix typos or update information; use delete_message / delete_group_message to retract it '
+            'instead, and send a new message to reach different people. Only the text changes — attachments, quotes and '
+            'reactions stay. target_timestamp: ms timestamp of the original (from the send_* result or the message id in '
+            'get_conversation). message: the new full text (no formatting conversion). Give recipient (E.164) for a DM or'
+            ' group_id (from list_groups) for a group; neither is an error. Signal only accepts edits of your own '
+            "messages. Contacts Signal's servers and overwrites the stored body locally (the old text is not kept); "
+            'repeating the same edit has no further effect. Returns {status, target_timestamp}.'
         ),
         inputSchema={
             "type": "object",
@@ -258,9 +272,14 @@ TOOLS = [
     Tool(
         name="receive_messages",
         description=(
-            "Manually poll signal-cli for new messages and store them. "
-            "Prefer get_unread — it does this automatically and returns results in one call. "
-            "Use receive_messages only if you want to poll without reading results."
+            'Poll the signal-cli daemon once for newly arrived messages and save them to the local store. Normally use '
+            'get_unread instead — it polls when needed and returns unread messages in one call; use receive_direct only '
+            'if the daemon is stuck. timeout: seconds to wait (integer, default 5); max_messages: stop after this many '
+            '(default: no limit). Incoming edits and remote deletes are applied to stored messages instead of being '
+            'returned; receipts are returned but not stored. Does not mark anything read. Returns a list of messages (id,'
+            ' sender, sender_name, recipient, group_id, group_name, body, timestamp, attachments, quote_id, reactions, '
+            'is_read). If the background service already holds the receive lock, returns {note, messages} with up to 50 '
+            'unread messages from the store instead.'
         ),
         inputSchema={
             "type": "object",
@@ -273,10 +292,13 @@ TOOLS = [
     Tool(
         name="receive_direct",
         description=(
-            "Receive messages by calling signal-cli directly, bypassing the daemon. "
-            "Use this as a fallback when the daemon is stuck or unresponsive — it stops the daemon, "
-            "calls signal-cli receive directly, then lets the daemon restart. "
-            "Prefer receive_messages (daemon mode) for normal use; use this only for troubleshooting."
+            'Troubleshooting fallback: receive messages by running signal-cli receive directly, bypassing the daemon. Use'
+            ' only when receive_messages / get_unread fail because the daemon is stuck; it stops the daemon (holding a '
+            'lock file meanwhile), runs the receive, and the daemon restarts on the next call. timeout: seconds to wait '
+            '(default 5); max_messages: stop after this many (default: no limit); ignore_attachments, ignore_stories, '
+            'ignore_avatars, ignore_stickers (all default false) skip downloading those. Received messages are saved to '
+            'the local store and remote deletes applied; nothing is marked read. Returns a list of messages in the same '
+            'shape as receive_messages; errors if signal-cli exits non-zero.'
         ),
         inputSchema={
             "type": "object",
@@ -326,13 +348,23 @@ TOOLS = [
     ),
     Tool(
         name="get_conversation",
-        description="Get recent message history with a contact or group from local store. Automatically marks returned messages as read in the local store (does NOT send a Signal read receipt — call send_read_receipt for that).",
+        description=(
+            'Read the message history of one conversation from the local store (no Signal server call). Use '
+            'list_conversations to find conversations, search_messages to find text across all chats, get_unread for only'
+            ' new messages. recipient: E.164 number for a DM or a group_id (from list_groups). limit: max messages '
+            '(default 50, clamped 1-500); offset: skip the newest N for paging back (default 0); since: only messages at '
+            'or after this ISO datetime (e.g. 2024-01-01T00:00:00; invalid values return an error). Side effect: incoming'
+            ' messages returned are marked read in the local store only — no read receipt is sent (use '
+            'send_read_receipt). Returns {messages (oldest first; id, sender, sender_name, body, timestamp, attachments, '
+            "quote_id, reactions, is_read …), total, has_more, limit, offset}. Timestamps are milliseconds: a message's "
+            'id in get_conversation is its timestamp (sent messages: sent_<ms>_<recipient or group_id>). '
+        ),
         inputSchema={
             "type": "object",
             "properties": {
-                "recipient": {"type": "string", "description": "Phone number or group ID"},
-                "limit": {"type": "integer", "description": "Max messages to return (default: 50)", "default": 50},
-                "offset": {"type": "integer", "description": "Number of messages to skip for pagination (default: 0)", "default": 0},
+                "recipient": {"type": "string", "description": "E.164 phone number for a DM, or group ID (from list_groups)"},
+                "limit": {"type": "integer", "description": "Max messages to return (default 50, clamped 1-500)", "default": 50},
+                "offset": {"type": "integer", "description": "Number of newest messages to skip for pagination (default: 0)", "default": 0},
                 "since": {"type": "string", "description": "Only messages after this ISO datetime (e.g. 2024-01-01T00:00:00)"},
             },
             "required": ["recipient"],
@@ -341,14 +373,14 @@ TOOLS = [
     Tool(
         name="search_messages",
         description=(
-            "Full-text search across all locally stored messages by keyword or phrase. "
-            "Searches message bodies using SQLite FTS — results are ranked by relevance. "
-            "Only messages in the local store are searchable; messages never received on this device are excluded. "
-            "Use sender to narrow results to a specific conversation. "
-            "Use since and/or until (ISO 8601) to restrict to a time window, e.g. 'last week' or a specific day. "
-            "Use limit and offset to paginate through large result sets. "
-            "Use when looking for a specific message or topic across all Signal conversations. "
-            "Do NOT use to browse a conversation chronologically — use get_conversation for that."
+            'Full-text search of message bodies across all conversations in the local store (SQLite FTS; no Signal server'
+            ' call, nothing marked read). Only messages stored on this device are found. Use get_conversation to read a '
+            'chat in order. query: words to find (all words must occur; falls back to substring match if FTS fails; empty'
+            ' returns []). sender: only messages from this E.164 number. since (inclusive) / until (exclusive) ISO dates,'
+            ' e.g. since=2024-01-01, until=2024-01-02 covers all of Jan 1; invalid dates return an error. limit: max '
+            'results (default 50, clamped 1-500); offset: skip N results for paging (default 0). Returns a list of '
+            'messages, newest first (id, sender, sender_name, recipient, group_id, group_name, body, timestamp, '
+            'attachments …).'
         ),
         inputSchema={
             "type": "object",
@@ -357,7 +389,7 @@ TOOLS = [
                 "sender": {"type": "string", "description": "Filter results to messages from this phone number (E.164)"},
                 "since": {"type": "string", "description": "Only messages at or after this ISO datetime (e.g. 2024-01-01 or 2024-01-01T09:00:00)"},
                 "until": {"type": "string", "description": "Only messages strictly before this ISO datetime (exclusive; until=2024-01-02 includes all of Jan 1)"},
-                "limit": {"type": "integer", "description": "Maximum results to return (default 50)"},
+                "limit": {"type": "integer", "description": "Maximum results to return (default 50, clamped 1-500)"},
                 "offset": {"type": "integer", "description": "Skip this many results for pagination (default 0)", "default": 0},
             },
             "required": ["query"],
@@ -366,11 +398,20 @@ TOOLS = [
     Tool(
         name="send_attachment",
         description=(
-            "Send one or more files or images to a Signal contact. "
-            "Supports photos, videos, documents, and audio files. "
-            "Use path for a single file or paths to send multiple files in one message. "
-            "Set view_once=true to send media that auto-deletes after the recipient views it once. "
-            "For groups use send_group_attachment instead."
+            'Send one or more files (photos, videos, documents, audio) to one Signal contact in a single message. Use '
+            'send_group_attachment for groups, send_message for text only, send_sticker for stickers. Address by '
+            'recipient (E.164) or username (alice.42 or username link) — exactly one. path: a single file; paths: several'
+            ' files sent together (one of the two is required). Files must lie inside the allowed send folders (default: '
+            'the signal-mcp attachments folder, ~/Downloads, ~/Desktop, ~/Documents; override with SIGNAL_MCP_SEND_ROOTS)'
+            ' and not be hidden, else an error is returned. caption: text shown with the files (default empty); '
+            'view_once=true lets the recipient open media only once; voice_note=true marks audio as a voice note. '
+            'Reply/quote: quote_author (E.164) + quote_timestamp (ms) of the original; quote_message (quoted text; '
+            'default: looked up in the local store), quote_mentions ({start, length, author}), quote_text_styles '
+            "('start:length:STYLE') and quote_attachments ('contentType[:filename[:previewFile]]') only shape the quote "
+            'bubble. no_urgent=true sends without a push notification; notify_self=true delivers a normal notifying '
+            "message if you are among the recipients. Contacts Signal's servers; not idempotent (repeating sends a "
+            'duplicate); sends share a 20-per-minute rate limit (calls wait rather than fail). Saved to the local store '
+            '(caption as body). Returns {status, timestamp}.'
         ),
         inputSchema={
             "type": "object",
@@ -390,16 +431,19 @@ TOOLS = [
     Tool(
         name="send_group_attachment",
         description=(
-            "Send one or more files (photos, videos, documents, audio) to a Signal group in a single message. "
-            "All current group members receive the attachment via the normal Signal encrypted delivery pipeline. "
-            "Provide path for a single file or paths for multiple files sent together in one message. "
-            "Set view_once=true so each member can only open the media once before it disappears — "
-            "ideal for sensitive images; does not apply to document types. "
-            "The file must exist and be readable on the local filesystem; non-existent paths return an error. "
-            "Use list_groups to obtain the group_id. "
-            "Use when sharing a file with a group chat. "
-            "Do NOT use for direct messages — use send_attachment instead. "
-            "Do NOT use when you only want to send text — use send_group_message instead."
+            'Send one or more files (photos, videos, documents, audio) to a Signal group in a single message. Use '
+            'send_attachment for a single contact, send_group_message for text only. group_id comes from list_groups. '
+            'path: a single file; paths: several files sent together (one of the two is required). Files must lie inside '
+            'the allowed send folders (default: the signal-mcp attachments folder, ~/Downloads, ~/Desktop, ~/Documents; '
+            'override with SIGNAL_MCP_SEND_ROOTS) and not be hidden, else an error is returned. caption: text shown with '
+            'the files (default empty); view_once=true lets each member open media only once; voice_note=true marks audio'
+            ' as a voice note. Reply/quote: quote_author (E.164) + quote_timestamp (ms) of the original; quote_message '
+            '(quoted text; default: looked up in the local store), quote_mentions ({start, length, author}), '
+            "quote_text_styles ('start:length:STYLE') and quote_attachments ('contentType[:filename[:previewFile]]') only"
+            ' shape the quote bubble. no_urgent=true sends without a push notification; notify_self=true delivers a '
+            "normal notifying message if you are among the recipients. Contacts Signal's servers; not idempotent "
+            '(repeating sends a duplicate); sends share a 20-per-minute rate limit (calls wait rather than fail). Saved '
+            'to the local store (caption as body). Returns {status, timestamp}.'
         ),
         inputSchema={
             "type": "object",
@@ -419,14 +463,13 @@ TOOLS = [
     Tool(
         name="react_to_message",
         description=(
-            "Add or remove an emoji reaction on a Signal message in a direct or group conversation. "
-            "target_author is the phone number of the person who sent the original message. "
-            "target_timestamp is the sent_at timestamp of that message (from get_conversation). "
-            "Supply recipient for a DM conversation or group_id for a group conversation — exactly one is required. "
-            "Each account can have at most one reaction per message; calling again with a different emoji replaces the previous one. "
-            "Set remove=true to retract an existing reaction without adding a new one (emoji is still required as the key). "
-            "Use when you want to react to or acknowledge a specific message without sending a reply. "
-            "Do NOT use to send a text reply — use send_message or send_group_message for that."
+            'Add or remove your emoji reaction on a message in a DM or group. Use to acknowledge without replying; use '
+            "send_message / send_group_message for a text reply. target_author: E.164 number of the message's sender; "
+            "target_timestamp: its ms timestamp (message id in get_conversation, or a send_* result). emoji: e.g. '👍'. "
+            'Give recipient (E.164) for a DM or group_id for a group; neither is an error. You have at most one reaction '
+            'per message: a new emoji replaces the old one, repeating the same one changes nothing. remove=true retracts '
+            "that reaction (emoji still required; default false). Contacts Signal's servers; not stored locally. Returns "
+            "{status: 'reaction sent' | 'reaction removed'}."
         ),
         inputSchema={
             "type": "object",
@@ -444,15 +487,12 @@ TOOLS = [
     Tool(
         name="set_typing",
         description=(
-            "Send a 'typing…' indicator to a Signal contact to show you are composing a message. "
-            "The indicator appears immediately in the recipient's conversation and auto-expires after ~15 seconds "
-            "if no message is sent — you do not need to call stop=true after sending the message. "
-            "Call with stop=true to cancel an in-progress typing indicator early (e.g. if the user abandons the message). "
-            "signal-cli relays the indicator via the Signal protocol; if the recipient has typing indicators "
-            "disabled in their settings, it is silently ignored on their end — no error is returned. "
-            "Provide recipient for a one-to-one chat or group_id for a group (at least one is required). "
-            "Use before send_message to create a realistic 'typing' effect in an automated workflow. "
-            "Do NOT call repeatedly in a tight loop; one call per composing session is sufficient."
+            "Show or cancel the 'typing…' indicator in a DM or group. Purely cosmetic; use before send_message / "
+            'send_group_message in an automated reply. recipient: E.164 number for a DM; group_id for a group (from '
+            'list_groups); at least one is required. stop=true cancels an active indicator early (default false = start).'
+            ' The indicator expires by itself after ~15 seconds and is cleared when you send, so stop is rarely needed; '
+            "one call per message is enough — don't loop. If the recipient disabled typing indicators it is silently "
+            "ignored. Contacts Signal's servers; nothing is stored. Returns {status: 'typing indicator sent'}."
         ),
         inputSchema={
             "type": "object",
@@ -671,12 +711,14 @@ TOOLS = [
     Tool(
         name="get_unread",
         description=(
-            "Get new unread messages. If the background service (signal-mcp install-service) is running, "
-            "reads directly from the local store. Otherwise polls signal-cli first to fetch any messages "
-            "that arrived since the last check, then returns unread. Always use this to check for new messages. "
-            "Messages are marked as read after retrieval, so a call with has_more=true in the response "
-            "should be followed by calling get_unread again with the same limit — the just-returned "
-            "messages are no longer unread, so the next call naturally returns the next batch."
+            'Return new unread incoming messages across all conversations — the default way to check for new messages. If'
+            ' the background service (signal-mcp install-service) is running it reads the local store; otherwise it first'
+            ' polls signal-cli (at most once per 30 s) and adds a _warning suggesting the service. Use get_conversation '
+            "for a chat's full history, list_conversations for an inbox overview. limit: max messages (default 50, "
+            'clamped 1-500); the newest are kept. Side effect: returned messages are marked read in the local store only '
+            '(no read receipt — use send_read_receipt; mark_as_unread to undo). Returns {messages (oldest first; id, '
+            'sender, sender_name, group_id, group_name, body, timestamp, attachments …), has_more}; if has_more is true '
+            'call again with the same limit to get the next batch.'
         ),
         inputSchema={
             "type": "object",
@@ -698,12 +740,12 @@ TOOLS = [
     Tool(
         name="list_conversations",
         description=(
-            "List all conversations (both direct and group) ordered by most recent message. "
-            "Returns contact/group name, phone number or group_id, last message preview, timestamp, and unread count. "
-            "Use this to get an inbox overview before reading specific conversations with get_conversation. "
-            "Contact and group names are resolved from local signal-cli contacts and groups. "
-            "Use get_unread to fetch only unread messages across all conversations. "
-            "Do NOT use this to read message history — use get_conversation for that."
+            'List every conversation (direct and group) in the local store, most recent first — an inbox overview. Takes '
+            'no parameters. Use get_conversation to read one, get_unread for only new messages, search_messages to find '
+            'text. Reads only locally stored messages (no Signal server call; nothing marked read); names come from the '
+            'cached signal-cli contacts and groups. Returns a list of {id (E.164 number or group_id — pass to '
+            "get_conversation), type ('direct' | 'group'), name, last_message, last_message_at (ISO), message_count, "
+            'unread_count}.'
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
@@ -750,17 +792,12 @@ TOOLS = [
     Tool(
         name="delete_message",
         description=(
-            "Remote-delete (unsend) a message you previously sent to a Signal contact. "
-            "Delivers a delete request to the recipient's device; the message disappears from their "
-            "conversation view on Signal 5.0+ clients. "
-            "You can only delete messages you sent — you cannot delete messages received from others. "
-            "target_timestamp is the sent_at timestamp of the message (from get_conversation). "
-            "Deletion may fail silently if the recipient is on an older Signal client. "
-            "Remote deletion does not remove the message from the local signal-mcp store — "
-            "use delete_local_messages to remove it locally. "
-            "Use when you want to retract a sent message from the recipient's device. "
-            "Do NOT use for group messages — use delete_group_message instead. "
-            "Do NOT use to delete a message you received — only senders can remotely delete."
+            'Remote-delete (unsend) a message you sent to one contact, removing it for everyone in the chat on Signal '
+            '5.0+ clients. Use delete_group_message for groups; delete_local_messages to remove messages only from the '
+            'local store. Only your own messages can be deleted — you cannot delete what others sent. recipient: E.164 '
+            'number of the contact; target_timestamp: ms timestamp of your message (from the send_message result or '
+            'get_conversation). Irreversible; older clients may silently ignore it; repeating it has no further effect. '
+            "The local store copy is kept. Returns {status: 'deleted'}."
         ),
         inputSchema={
             "type": "object",
@@ -774,15 +811,12 @@ TOOLS = [
     Tool(
         name="delete_group_message",
         description=(
-            "Remote-delete (unsend) a message you previously sent to a Signal group. "
-            "Delivers a delete request to all group members' devices; the message disappears from "
-            "their conversation view on Signal 5.0+ clients. "
-            "You can only delete messages you sent — for admin deletion of any member's message use admin_delete_message. "
-            "target_timestamp is the sent_at timestamp of the message (from get_conversation). "
-            "Deletion may fail silently on older Signal clients. "
-            "Remote deletion does not remove the message from the local signal-mcp store. "
-            "Use when you want to retract a message you sent in a group. "
-            "Do NOT use for direct messages — use delete_message instead."
+            'Remote-delete (unsend) a message you sent to a group, removing it for all members on Signal 5.0+ clients. '
+            "Use delete_message for DMs; admin_delete_message to delete another member's message as admin; "
+            'delete_local_messages for local-only removal. group_id: from list_groups; target_timestamp: ms timestamp of '
+            'your message (from the send_group_message result or get_conversation). Irreversible; older clients may '
+            'silently ignore it; repeating it has no further effect. The local store copy is kept. Returns {status: '
+            "'deleted'}."
         ),
         inputSchema={
             "type": "object",
@@ -796,20 +830,18 @@ TOOLS = [
     Tool(
         name="send_read_receipt",
         description=(
-            "Send a read receipt to a contact, notifying them that you have read their messages. "
-            "The sender sees a 'Read' indicator under their messages in their Signal app. "
-            "Pass all timestamps you want to mark as read in a single call to batch the receipts. "
-            "Timestamps come from the received_at or sent_at fields in get_conversation. "
-            "Note: read receipts are only delivered if the sender has read receipts enabled in their Signal settings. "
-            "Use after reading a conversation with get_conversation to acknowledge the messages. "
-            "Do NOT use to mark messages as read in the local store — get_conversation does that automatically. "
-            "Do NOT use for group messages — Signal does not support per-sender read receipts in groups."
+            "Send a read receipt to a contact so their Signal app shows your messages as 'Read', and mark those messages "
+            'read in the local store. Use after reading a DM with get_conversation (which marks read locally but sends no'
+            ' receipt). Not for groups. sender: E.164 number of the contact who sent the messages. timestamps: list of '
+            "their messages' ms timestamps (the message id in get_conversation), batched in one call. Only shown if the "
+            "sender has read receipts enabled. Contacts Signal's servers; repeating is harmless. Returns {status: 'read "
+            "receipt sent'}."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "sender": {"type": "string", "description": "Phone number (E.164) of the contact whose messages you are acknowledging"},
-                "timestamps": {"type": "array", "items": {"type": "integer"}, "description": "Timestamps of the messages to mark as read (from get_conversation sent_at/received_at fields)"},
+                "timestamps": {"type": "array", "items": {"type": "integer"}, "description": "Millisecond timestamps of the messages to acknowledge (the message id in get_conversation)"},
             },
             "required": ["sender", "timestamps"],
         },
@@ -924,17 +956,11 @@ TOOLS = [
     Tool(
         name="pin_message",
         description=(
-            "Pin a message in a DM or group conversation so it appears prominently in the conversation header. "
-            "Pinning delivers a system-level pin notification to all participants via signal-cli; "
-            "they see the pinned message highlighted at the top of the thread. "
-            "Any participant can pin any message — admin privileges are not required. "
-            "Only one message can be pinned per conversation at a time; pinning a new message "
-            "automatically replaces the previous pin. "
-            "Provide exactly one of recipient (for a DM) or group_id (for a group). "
-            "Get target_author and target_timestamp from get_conversation — both are required to identify the message. "
-            "Use unpin_message to remove a pinned message without replacing it. "
-            "Use when you want to highlight an important message for all participants. "
-            "Do NOT use if you only want to bookmark a message for yourself — pinning is visible to everyone."
+            'Pin a message at the top of a DM or group conversation for all participants. Pinning is visible to everyone '
+            "— don't use it as a private bookmark (send_note_to_self instead). Use unpin_message to remove a pin. "
+            "target_author: E.164 number of the message's sender; target_timestamp: its ms timestamp (message id in "
+            'get_conversation). Give recipient (E.164) for a DM or group_id for a group; neither is an error. Contacts '
+            "Signal's servers; pinning an already pinned message changes nothing. Returns {status: 'message pinned'}."
         ),
         inputSchema={
             "type": "object",
@@ -950,10 +976,11 @@ TOOLS = [
     Tool(
         name="unpin_message",
         description=(
-            "Unpin a previously pinned message in a DM or group conversation, removing it from the "
-            "conversation header. Provide either recipient (for DMs) or group_id (for groups). "
-            "Get target_author and target_timestamp from get_conversation. "
-            "Use pin_message to pin a message."
+            'Remove a pinned message from the top of a DM or group conversation for all participants; the message itself '
+            "stays. Use pin_message to pin. target_author: E.164 number of the pinned message's sender; target_timestamp:"
+            ' its ms timestamp (message id in get_conversation). Give recipient (E.164) for a DM or group_id for a group;'
+            " neither is an error. Contacts Signal's servers; repeating has no further effect. Returns {status: 'message "
+            "unpinned'}."
         ),
         inputSchema={
             "type": "object",
@@ -969,10 +996,11 @@ TOOLS = [
     Tool(
         name="admin_delete_message",
         description=(
-            "As a group admin, delete any message posted in a group you administer, regardless of who sent it. "
-            "The message is removed for all participants immediately. "
-            "Only works if you are an admin of the specified group — use list_groups to confirm admin status. "
-            "For deleting your own messages use delete_message (DM) or delete_group_message (group) instead."
+            "As a group admin, delete any member's message in that group for all participants. For your own messages use "
+            'delete_group_message (group) or delete_message (DM); for local-only removal delete_local_messages. Requires '
+            'admin rights — check is_admin in list_groups. group_id: from list_groups; target_author: E.164 number of the'
+            " message's sender; target_timestamp: its ms timestamp (message id in get_conversation). Irreversible; "
+            "contacts Signal's servers; the local store copy is kept. Returns {status: 'message deleted by admin'}."
         ),
         inputSchema={
             "type": "object",
@@ -1021,17 +1049,16 @@ TOOLS = [
     Tool(
         name="mark_as_unread",
         description=(
-            "Mark one or more messages as unread in the local signal-mcp store. "
-            "This updates only the local database — it does not affect read receipts already sent "
-            "to the sender, nor does it change how messages appear on other devices. "
-            "message_ids are the internal signal-mcp IDs returned by get_conversation or search_messages. "
-            "Messages marked unread are returned by get_unread on the next call. "
-            "Use when you want to flag a message for follow-up later."
+            'Mark messages as unread again in the local signal-mcp store, so get_unread returns them on its next call — '
+            'e.g. to flag for follow-up. Local only: read receipts already sent and other devices are unaffected '
+            '(send_read_receipt is the opposite, outward action). message_ids: list of message id strings exactly as '
+            'returned by get_conversation, get_unread or search_messages; unknown ids are ignored. Idempotent. Returns '
+            '{status, count} where count is the number of ids passed.'
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "message_ids": {"type": "array", "items": {"type": "string"}, "description": "List of message IDs to mark as unread"},
+                "message_ids": {"type": "array", "items": {"type": "string"}, "description": "Message id strings as returned by get_conversation, get_unread or search_messages"},
             },
             "required": ["message_ids"],
         },
@@ -1069,11 +1096,13 @@ TOOLS = [
     Tool(
         name="create_poll",
         description=(
-            "Create a poll and send it to a Signal contact or group. "
-            "Provide at least 2 options. Set multi_select=true to allow voters to pick multiple answers. "
-            "Provide either recipient (DM) or group_id (group) — exactly one is required. "
-            "Returns the poll timestamp needed for vote_poll and terminate_poll. "
-            "Use terminate_poll to close the poll and stop accepting votes."
+            'Create a poll and send it to a contact or group. Use vote_poll to vote and terminate_poll to close it. '
+            'question: the poll text; options: answer strings (at least 2, else an error); multi_select=true lets voters '
+            'pick several answers (default false = single choice). Give recipient (E.164) for a DM or group_id (from '
+            "list_groups) for a group; neither is an error. Contacts Signal's servers; not idempotent (each call sends a "
+            "new poll); shares the 20-sends-per-minute rate limit; not saved to the local store. Returns {status: 'poll "
+            "created', timestamp} — the timestamp (with your number as author) identifies the poll for vote_poll and "
+            'terminate_poll.'
         ),
         inputSchema={
             "type": "object",
@@ -1090,19 +1119,14 @@ TOOLS = [
     Tool(
         name="vote_poll",
         description=(
-            "Cast your vote on an active Signal poll in a DM or group conversation. "
-            "Your vote is delivered via signal-cli and is visible to all participants in real time. "
-            "Each participant can vote once; re-voting overwrites the previous selection. "
-            "For single-choice polls, provide exactly one option index in votes. "
-            "For multi-select polls, provide all chosen indices in a single call — partial updates are not supported. "
-            "votes are 0-based indices corresponding to the options array from the original create_poll call. "
-            "Get target_author and target_timestamp from the poll message returned by get_conversation — "
-            "a poll has no separate ID, it's identified by its author + message timestamp. "
-            "Provide exactly one of recipient (for a DM poll) or group_id (for a group poll). "
-            "Voting on a terminated poll returns an error. "
-            "Use terminate_poll to close a poll you created and freeze the results. "
-            "Use when responding to an open poll in a conversation. "
-            "Do NOT use to create a poll — use create_poll instead."
+            'Cast or change your vote on an open Signal poll in a DM or group; the vote is visible to participants. Use '
+            'create_poll to start a poll, terminate_poll to close your own. A poll has no separate id: identify it by '
+            "target_author (E.164 number of the poll's creator) + target_timestamp (ms timestamp of the poll message, "
+            "from create_poll or get_conversation). votes: 0-based indices into the poll's options — exactly one for a "
+            'single-choice poll, all chosen indices at once for multi-select (each call replaces your previous vote). '
+            'Give recipient (E.164) for a DM poll or group_id for a group poll; neither is an error. Voting on a '
+            "terminated poll fails. Contacts Signal's servers; a local per-poll counter is incremented so re-votes "
+            "supersede earlier ones. Returns {status: 'vote sent'}."
         ),
         inputSchema={
             "type": "object",
@@ -1119,12 +1143,12 @@ TOOLS = [
     Tool(
         name="terminate_poll",
         description=(
-            "Close (terminate) a poll you created, stopping any further votes. "
-            "All participants are notified that the poll has ended and can see the final results. "
-            "Get target_timestamp from the original poll message in get_conversation — a poll has no "
-            "separate ID, it's identified by its message timestamp. "
-            "Only the poll creator can terminate their own poll. "
-            "Provide either recipient (DM poll) or group_id (group poll)."
+            'Close a poll you created so no more votes are accepted; participants see it as ended with final results. '
+            'Irreversible. Use vote_poll to vote, create_poll to start a new one. Only the creator can terminate. '
+            'target_author: your own E.164 number (accepted for symmetry with vote_poll; only the timestamp is sent); '
+            'target_timestamp: ms timestamp of the poll (from create_poll or get_conversation). Give recipient (E.164) '
+            "for a DM poll or group_id for a group poll; neither is an error. Contacts Signal's servers. Returns {status:"
+            " 'poll terminated'}."
         ),
         inputSchema={
             "type": "object",
@@ -1303,16 +1327,12 @@ TOOLS += [
     Tool(
         name="send_sticker",
         description=(
-            "Send a single sticker to a Signal contact in a direct message. "
-            "Stickers are small images from installed packs delivered as a distinct message type — "
-            "they appear rendered in the conversation, not as a file attachment. "
-            "Both pack_id (a hex string) and sticker_id (a 0-based integer) must match an installed pack; "
-            "referencing an uninstalled pack or an invalid sticker_id returns an error. "
-            "Use list_sticker_packs to browse all installed packs and retrieve valid pack_id and sticker_id values. "
-            "If no packs are installed, call add_sticker_pack first with a signal.art URL to install one. "
-            "Use when you want to send an expressive image reaction or decoration to a contact. "
-            "Use send_group_sticker to send a sticker to a group instead of a DM. "
-            "Do NOT use to send a regular image file — use send_attachment for that."
+            'Send one sticker from an installed sticker pack to a single contact; it renders as a sticker, not a file. '
+            'Use send_group_sticker for groups, send_attachment for ordinary images. recipient: E.164 number. pack_id: '
+            'hex pack id and sticker_id: integer index within the pack, both from list_sticker_packs; an uninstalled pack'
+            ' or invalid id returns an error — install packs first with add_sticker_pack (signal.art URL). Contacts '
+            "Signal's servers; not idempotent (repeating sends a duplicate); sends share a 20-per-minute rate limit "
+            "(calls wait rather than fail). Saved locally as '[sticker pack:id]'. Returns {status, timestamp}."
         ),
         inputSchema={
             "type": "object",
@@ -1327,17 +1347,12 @@ TOOLS += [
     Tool(
         name="send_group_sticker",
         description=(
-            "Send a single sticker to a Signal group so all members receive it. "
-            "Stickers are small images from installed packs delivered as a distinct message type — "
-            "they appear rendered in the group conversation, not as a file attachment. "
-            "Both pack_id (a hex string) and sticker_id (a 0-based integer) must match an installed pack; "
-            "referencing an uninstalled pack or invalid sticker_id returns an error. "
-            "Use list_sticker_packs to browse installed packs and retrieve valid pack_id and sticker_id values. "
-            "If no packs are installed, call add_sticker_pack first with a signal.art URL to install one. "
-            "Use list_groups to obtain the group_id. "
-            "Use when sending an expressive image reaction or decoration to a group chat. "
-            "Use send_sticker for direct messages instead of group chats. "
-            "Do NOT use to send a regular image file — use send_group_attachment for that."
+            'Send one sticker from an installed sticker pack to a Signal group; it renders as a sticker, not a file. Use '
+            'send_sticker for a single contact, send_group_attachment for ordinary images. group_id: from list_groups. '
+            'pack_id: hex pack id and sticker_id: integer index within the pack, both from list_sticker_packs; an '
+            'uninstalled pack or invalid id returns an error — install packs first with add_sticker_pack (signal.art '
+            "URL). Contacts Signal's servers; not idempotent (repeating sends a duplicate); sends share a 20-per-minute "
+            "rate limit (calls wait rather than fail). Saved locally as '[sticker pack:id]'. Returns {status, timestamp}."
         ),
         inputSchema={
             "type": "object",
@@ -1352,9 +1367,13 @@ TOOLS += [
     Tool(
         name="send_story",
         description=(
-            "Post an image or video as a Signal story — to My Story by default, or to a group's story with group_id. "
-            "Stories are visible to the audience for 24 hours. "
-            "Do NOT use to message someone — use send_message or send_attachment."
+            'Post an image or video as a Signal story, visible to its audience for 24 hours. Use send_message / '
+            'send_attachment to message someone directly. path: one local image or video file; Files must lie inside the '
+            'allowed send folders (default: the signal-mcp attachments folder, ~/Downloads, ~/Desktop, ~/Documents; '
+            'override with SIGNAL_MCP_SEND_ROOTS) and not be hidden, else an error is returned. group_id (from '
+            "list_groups) posts to that group's story instead of My Story. allow_replies (default true): false disables "
+            "replies. Contacts Signal's servers; not idempotent (each call posts a new story); shares the "
+            "20-sends-per-minute rate limit; not saved to the local store. Returns {status: 'posted', timestamp}."
         ),
         inputSchema={
             "type": "object",
