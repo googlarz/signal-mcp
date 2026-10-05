@@ -265,25 +265,48 @@ def test_parse_envelope_typing_message(client):
 # ── _parse_attachments shutil.copy2 success ──────────────────────────────────
 
 def test_parse_attachments_copy_success(client, tmp_path):
-    """When source file exists, copy2 succeeds and local_path is updated to dest (line 599)."""
-    src = tmp_path / "signal_attachment_abc123"
-    src.write_bytes(b"binary-data")
+    """The file signal-cli downloaded (named by attachment id) is copied into the
+    attachments dir; "filename" is only the sender's original name, never a path."""
+    src_dir = tmp_path / "signal-cli-attachments"
+    src_dir.mkdir()
+    (src_dir / "abc123.jpg").write_bytes(b"binary-data")
     dest_dir = tmp_path / "dest"
     dest_dir.mkdir()
 
-    with patch("signal_mcp.client.ensure_attachment_dir", return_value=dest_dir):
+    with patch("signal_mcp.client.ensure_attachment_dir", return_value=dest_dir), \
+         patch("signal_mcp.client.SIGNAL_CLI_ATTACHMENTS_DIR", src_dir):
         attachments = client._parse_attachments({
             "attachments": [
-                {
-                    "filename": str(src),
-                    "contentType": "image/jpeg",
-                }
+                {"id": "abc123.jpg", "filename": "holiday.jpg", "contentType": "image/jpeg"}
             ]
         })
 
     assert len(attachments) == 1
-    # local_path should be updated to dest (line 599 was reached)
-    assert attachments[0].local_path == str(dest_dir / src.name)
+    assert attachments[0].local_path == str(dest_dir / "abc123.jpg")
+    assert (dest_dir / "abc123.jpg").read_bytes() == b"binary-data"
+    assert attachments[0].filename == "holiday.jpg"
+    assert attachments[0].id == "abc123.jpg"
+
+
+def test_parse_attachments_missing_source_keeps_none_local_path(client, tmp_path):
+    with patch("signal_mcp.client.ensure_attachment_dir", return_value=tmp_path), \
+         patch("signal_mcp.client.SIGNAL_CLI_ATTACHMENTS_DIR", tmp_path / "nope"):
+        att = client._parse_attachments({"attachments": [{"id": "gone.png", "contentType": "image/png"}]})[0]
+    assert att.local_path is None
+    assert att.id == "gone.png"
+
+
+def test_parse_attachments_id_cannot_escape_dirs(client, tmp_path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (tmp_path / "secret.txt").write_text("x")
+    dest_dir = tmp_path / "dest"
+    dest_dir.mkdir()
+    with patch("signal_mcp.client.ensure_attachment_dir", return_value=dest_dir), \
+         patch("signal_mcp.client.SIGNAL_CLI_ATTACHMENTS_DIR", src_dir):
+        att = client._parse_attachments({"attachments": [{"id": "../secret.txt", "contentType": "text/plain"}]})[0]
+    assert att.local_path is None
+    assert not (dest_dir / "secret.txt").exists()
 
 
 # ── _ensure_contact_cache happy path ─────────────────────────────────────────

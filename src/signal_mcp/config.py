@@ -9,6 +9,8 @@ from pathlib import Path
 DAEMON_PORT = 7583
 DAEMON_URL = f"http://localhost:{DAEMON_PORT}/api/v1/rpc"
 ATTACHMENT_DIR = Path.home() / "Downloads" / "signal-attachments"
+# Where signal-cli itself stores received attachments, one file per attachment id.
+SIGNAL_CLI_ATTACHMENTS_DIR = Path.home() / ".local" / "share" / "signal-cli" / "attachments"
 DAEMON_PID_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "daemon.pid"
 DAEMON_MESSAGES_LOG = Path.home() / ".local" / "share" / "signal-mcp" / "daemon-messages.jsonl"
 RECEIVE_LOCK_FILE = Path.home() / ".local" / "share" / "signal-mcp" / "receive.lock"

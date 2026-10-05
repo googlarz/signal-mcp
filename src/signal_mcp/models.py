@@ -13,6 +13,7 @@ class Attachment:
     width: int | None = None
     height: int | None = None
     caption: str | None = None
+    id: str | None = None
 
 
 @dataclass
@@ -51,6 +52,7 @@ class Message:
                     "width": a.width,
                     "height": a.height,
                     "caption": a.caption,
+                    "id": a.id,
                 }
                 for a in self.attachments
             ],

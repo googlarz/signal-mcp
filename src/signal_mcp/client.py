@@ -22,6 +22,7 @@ from .config import (
     DAEMON_PORT,
     DAEMON_URL,
     RECEIVE_LOCK_FILE,
+    SIGNAL_CLI_ATTACHMENTS_DIR,
     clear_daemon_pid,
     detect_account,
     ensure_attachment_dir,
@@ -1045,26 +1046,27 @@ class SignalClient:
         """Extract and copy attachments from a dataMessage/sentMessage dict."""
         attachments = []
         for att in data_message.get("attachments", []):
-            local_path = att.get("filename")
-            if local_path:
-                dest = ensure_attachment_dir() / Path(local_path).name
+            # signal-cli's "filename" is the sender's original file name, not a path;
+            # the downloaded file lives in its attachments dir under the attachment id.
+            att_id = att.get("id")
+            local_path = None
+            if att_id:
+                name = Path(att_id).name
+                dest = ensure_attachment_dir() / name
                 try:
-                    shutil.copy2(local_path, dest)
+                    shutil.copy2(SIGNAL_CLI_ATTACHMENTS_DIR / name, dest)
                     local_path = str(dest)
                 except OSError:
-                    logger.warning(
-                        "Failed to copy attachment %r into %s; local_path will still "
-                        "point at the signal-cli-managed source, which may be ephemeral",
-                        local_path, dest,
-                    )
+                    logger.warning("Failed to copy attachment %r into %s", name, dest)
             attachments.append(Attachment(
                 content_type=att.get("contentType", "application/octet-stream"),
-                filename=att.get("filename", ""),
+                filename=att.get("filename") or "",
                 local_path=local_path,
                 size=att.get("size"),
                 width=att.get("width"),
                 height=att.get("height"),
                 caption=att.get("caption"),
+                id=att_id,
             ))
         return attachments
 
