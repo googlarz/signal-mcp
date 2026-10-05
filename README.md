@@ -50,7 +50,7 @@ uv tool install signal-mcp
 claude mcp add signal -- signal-mcp serve
 ```
 
-Restart Claude Code and ask *"check my Signal messages"*. Works with any MCP client (Claude Code and Claude Desktop are what it is developed and tested with) — config snippets are in [Setup](#setup).
+Needs Python 3.12+, signal-cli 0.13+ and a Signal account on your phone. Restart Claude Code and ask *"check my Signal messages"*. Works with any MCP client (Claude Code and Claude Desktop are what it is developed and tested with) — config snippets are in [Setup](#setup).
 
 ## What you can ask
 
@@ -217,18 +217,31 @@ groups, devices, and settings — are hidden from tool listings and rejected if
 called directly. Useful when connecting an AI client you don't fully trust with
 write access to your real Signal account.
 
+## Troubleshooting
+
+Start with `signal-mcp doctor` — it checks signal-cli, your linked account, the daemon, and message capture, and says which one is broken.
+
+| Symptom | Cause and fix |
+|---|---|
+| `doctor` reports `Devices readable — ReadTimeout`, or `list_devices` hangs | A bug in **signal-cli 0.14.8** (`listDevices` crashes inside libsignal). Fixed upstream, not yet released; everything else works. Upgrade signal-cli once 0.14.9 ships. |
+| "Unknown sender" / bare numbers in a group | Names come from your contacts, then Signal profiles (also for non-contacts), then Signal Desktop. Someone with none of these stays a number — `import-desktop` brings in Desktop's names. |
+| `import-desktop` fails on Linux | Needs `sqlcipher` and `libsecret-tools`, and an unlocked GNOME Keyring. KWallet-only setups aren't supported. |
+| Messages missing while Claude wasn't running | Install the background service: `signal-mcp install-service`. |
+| Attachment has no local file | Received files are copied to `~/Downloads/signal-attachments/`. If one is missing, `get_attachment` retrieves it from signal-cli's own attachment store by id. |
+
 ## MCP Tools
 
 ### Messaging
 
 | Tool | Description |
 |---|---|
-| `send_message` | Send a text message to a contact. Supports quoted replies (`quote_author`, `quote_timestamp`). |
-| `send_group_message` | Send a text message to a group. Supports quoted replies and `@mentions`. |
-| `send_attachment` | Send a file or image to a contact. Supports captions and view-once. |
-| `send_group_attachment` | Send a file or image to a group. Supports captions and view-once. |
+| `send_message` | Send a text message to a contact (by number, or by Signal `username`). Supports quoted replies (quoted text is filled in from your local store), link previews, `no_urgent`, `notify_self`, `end_session`, and story replies. |
+| `send_group_message` | Send a text message to a group. Supports quoted replies, `@mentions`, and link previews. |
+| `send_attachment` | Send a file or image to a contact. Supports captions, view-once and `voice_note`. |
+| `send_group_attachment` | Send a file or image to a group. Supports captions, view-once and `voice_note`. |
 | `send_note_to_self` | Save a note to yourself (Signal's saved messages). |
-| `receive_messages` | Poll for new incoming messages and delivery receipts. |
+| `receive_messages` | Poll for new incoming messages and delivery receipts. Optional `max_messages`. |
+| `receive_direct` | Receive by calling signal-cli directly (no daemon) — for when the background service isn't running. Optional `max_messages` and `ignore_*` filters. |
 | `get_unread` | Get messages not yet marked as read from local store. |
 | `edit_message` | Edit a previously sent message (DM or group). Updates local store. Incoming edits from contacts also update the stored copy in-place. |
 | `delete_message` | Remote-delete (unsend) a sent DM. |
@@ -237,7 +250,8 @@ write access to your real Signal account.
 | `pin_message` | Pin a message in a DM or group conversation. |
 | `unpin_message` | Unpin a message in a DM or group conversation. |
 | `admin_delete_message` | Group admin: delete any message in a group you administer. |
-| `set_typing` | Send a typing indicator to a contact. |
+| `set_typing` | Send (or stop) a typing indicator in a chat or group. |
+| `send_story` | Post an image or video to your Signal story, optionally to a group story. |
 | `send_read_receipt` | Mark messages as read. Also updates local store. |
 | `send_sticker` | Send a sticker to a contact. |
 | `send_group_sticker` | Send a sticker to a group. |
@@ -327,6 +341,22 @@ write access to your real Signal account.
 |---|---|
 | `set_expiration_timer` | Set or disable disappearing messages for any DM or group. |
 
+### Scheduling
+
+| Tool | Description |
+|---|---|
+| `schedule_message` | Queue a message for later (`send_at`, ISO datetime) to a contact or group. |
+| `list_scheduled_messages` | List queued messages (`include_done` adds sent, cancelled and failed ones). |
+| `cancel_scheduled_message` | Cancel a pending scheduled message by id. |
+| `run_scheduled_messages` | Send everything that is due now. The background service does this automatically. |
+
+### Webhooks
+
+| Tool | Description |
+|---|---|
+| `set_webhook` | Set (or clear) a URL that receives a JSON `POST` for each incoming message. |
+| `get_webhook` | Show the configured webhook URL. |
+
 ### Data & Import
 
 | Tool | Description |
@@ -359,6 +389,11 @@ signal-mcp receive --watch                 # keep watching (saves to store)
 signal-mcp edit +1234567890 <timestamp> "corrected text"
 signal-mcp edit <group_id> <timestamp> "corrected text"
 
+# React / delete / block
+signal-mcp react +1234567890 <timestamp> +1234567890 👍
+signal-mcp delete +1234567890 <timestamp>  # unsend a message you sent
+signal-mcp block +1234567890               # and: signal-mcp unblock ...
+
 # Pin / unpin / admin-delete messages
 signal-mcp pin +1234567890 <timestamp> +1234567890
 signal-mcp unpin +1234567890 <timestamp> +1234567890
@@ -370,7 +405,9 @@ signal-mcp update-device <device_id> "My Laptop"
 # Contacts & groups
 signal-mcp contacts
 signal-mcp contacts --json
+signal-mcp find-contact anna               # add --all-recipients to include non-contacts (e.g. group members)
 signal-mcp groups
+signal-mcp group-label <group_id> "Anna"   # set YOUR OWN member label in a group
 signal-mcp conversations                   # list all chats with unread count + last message
 
 # History & search
@@ -381,6 +418,7 @@ signal-mcp history +1234567890 --since 2024-01-01
 signal-mcp search "keyword"
 signal-mcp search "keyword" --sender +1234567890   # restrict to one contact
 signal-mcp search "keyword" --limit 20
+signal-mcp search "invoice" --since 2024-01-01 --until 2024-02-01
 signal-mcp store-stats
 
 # Export
@@ -390,7 +428,20 @@ signal-mcp export messages.csv --format csv                # CSV format
 signal-mcp export --recipient +1234567890 --format csv     # one conversation
 signal-mcp export --since 2024-01-01                       # messages from date
 
-# Signal Desktop import (macOS) — one-time full import
+# Scheduled messages
+signal-mcp schedule-send +1234567890 "Happy birthday!" --at "2027-01-01 09:00"
+signal-mcp scheduled                       # list; cancel with: signal-mcp cancel-scheduled <id>
+signal-mcp run-scheduled                   # send whatever is due now
+
+# Stories & webhooks
+signal-mcp story photo.jpg
+signal-mcp set-webhook http://localhost:8080/signal   # run without a URL to clear
+signal-mcp get-webhook
+
+# Housekeeping
+signal-mcp prune --days 180                # delete local messages older than 180 days
+
+# Signal Desktop import — one-time full import
 signal-mcp import-desktop
 signal-mcp sync-desktop                    # incremental: only new messages since last sync
 
