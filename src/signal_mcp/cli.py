@@ -186,12 +186,14 @@ def _print_message(msg):
 
 @cli.command()
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def contacts(as_json: bool):
+@click.option("--all-recipients", is_flag=True,
+              help="Also include non-contacts (e.g. group members) with profile names")
+def contacts(as_json: bool, all_recipients: bool):
     """List all Signal contacts."""
     async def _run():
         async with SignalClient() as client:
             await client.ensure_daemon()
-            items = await client.list_contacts()
+            items = await client.list_contacts(all_recipients=all_recipients)
             if as_json:
                 click.echo(json.dumps([c.to_dict() for c in items], indent=2))
             else:
@@ -1006,12 +1008,14 @@ def get_webhook():
 @cli.command("find-contact")
 @click.argument("query")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def find_contact(query: str, as_json: bool):
+@click.option("--all-recipients", is_flag=True,
+              help="Also include non-contacts (e.g. group members) with profile names")
+def find_contact(query: str, as_json: bool, all_recipients: bool):
     """Search contacts by name or phone number fragment."""
     async def _run():
         async with SignalClient() as client:
             await client.ensure_daemon()
-            contacts = await client.list_contacts(search=query)
+            contacts = await client.list_contacts(search=query, all_recipients=all_recipients)
             if not contacts:
                 click.echo("No matching contacts.")
                 return

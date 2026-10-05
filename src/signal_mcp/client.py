@@ -683,9 +683,20 @@ class SignalClient:
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         }
 
-    async def set_typing(self, recipient: str, stop: bool = False) -> None:
-        action = "STOPPED" if stop else "STARTED"
-        await self._rpc("sendTyping", {"recipient": [recipient], "action": action})
+    async def set_typing(
+        self, recipient: str | None = None, stop: bool = False, group_id: str | None = None
+    ) -> None:
+        if not recipient and not group_id:
+            raise SignalError("Either recipient or group_id must be provided")
+        params: dict = {}
+        if recipient:
+            params["recipient"] = [recipient]
+        if group_id:
+            params["groupId"] = group_id
+        # SendTypingCommand reads a boolean "stop"; there is no "action" param.
+        if stop:
+            params["stop"] = True
+        await self._rpc("sendTyping", params)
 
     async def react_to_message(
         self,
@@ -929,6 +940,11 @@ class SignalClient:
         now = time.monotonic()
         if _contact_cache_loaded and (now - _contact_cache_at) < _CACHE_TTL:
             return
+        def fill_gap(key: str, name: str) -> None:
+            existing = _contact_cache.get(key)
+            if not existing or existing == key:
+                _contact_cache[key] = name
+
         try:
             contacts = await self.list_contacts()
             for c in contacts:
@@ -943,9 +959,17 @@ class SignalClient:
             # set has display_name == its own number/uuid, which counts as a gap.
             desktop_names = await asyncio.to_thread(_store.get_conversation_names, "direct")
             for conv_id, name in desktop_names.items():
-                existing = _contact_cache.get(conv_id)
-                if not existing or existing == conv_id:
-                    _contact_cache[conv_id] = name
+                fill_gap(conv_id, name)
+            # Recipients outside the address book (e.g. fellow group members)
+            # only carry a profile name; use it as the last resort so group
+            # senders don't show up as bare UUIDs.
+            for c in await self.list_contacts(all_recipients=True):
+                name = c.display_name
+                if not name or name == c.number:
+                    continue
+                for key in (c.number, c.uuid):
+                    if key:
+                        fill_gap(key, name)
             _contact_cache_loaded = True   # only set on success
             _contact_cache_at = time.monotonic()
         except SignalError:
@@ -1000,8 +1024,18 @@ class SignalClient:
 
     # ── Contacts ──────────────────────────────────────────────────────────────
 
-    async def list_contacts(self, search: str | None = None) -> list[Contact]:
-        result = await self._rpc("listContacts")
+    async def list_contacts(
+        self,
+        search: str | None = None,
+        all_recipients: bool = False,
+        blocked: bool | None = None,
+    ) -> list[Contact]:
+        params: dict = {}
+        if all_recipients:
+            params["allRecipients"] = True
+        if blocked is not None:
+            params["blocked"] = blocked
+        result = await self._rpc("listContacts", params or None)
         if not isinstance(result, list):
             raise SignalError(f"listContacts returned unexpected result: {result!r}")
         contacts = []
@@ -1016,6 +1050,18 @@ class SignalClient:
                 profile_name=None,
                 about=(profile.get("about") or c.get("about") or "").strip() or None,
                 blocked=c.get("isBlocked", False),
+                username=c.get("username") or None,
+                nick_name=(c.get("nickName") or "").strip() or None,
+                nick_given_name=(c.get("nickGivenName") or "").strip() or None,
+                nick_family_name=(c.get("nickFamilyName") or "").strip() or None,
+                note=(c.get("note") or "").strip() or None,
+                about_emoji=profile.get("aboutEmoji") or None,
+                has_avatar=bool(profile.get("hasAvatar")),
+                is_archived=bool(c.get("isArchived")),
+                is_hidden=bool(c.get("isHidden")),
+                profile_sharing=bool(c.get("profileSharing")),
+                unregistered=bool(c.get("unregistered")),
+                message_expiration_time=c.get("messageExpirationTime") or 0,
             ))
         if search:
             q = search.lower()
@@ -1025,6 +1071,8 @@ class SignalClient:
                 or q in (c.name or "").lower()
                 or q in (c.given_name or "").lower()
                 or q in (c.family_name or "").lower()
+                or q in (c.nick_name or "").lower()
+                or q in (c.username or "").lower()
             ]
         return contacts
 
@@ -1049,8 +1097,15 @@ class SignalClient:
     async def unblock_contact(self, number: str) -> None:
         await self._rpc("unblock", {"recipient": [number]})
 
-    async def remove_contact(self, number: str) -> None:
-        await self._rpc("removeContact", {"recipient": number})
+    async def remove_contact(self, number: str, forget: bool = False, hide: bool = False) -> None:
+        if forget and hide:
+            raise SignalError("forget and hide are mutually exclusive")
+        params: dict = {"recipient": number}
+        if forget:
+            params["forget"] = True
+        if hide:
+            params["hide"] = True
+        await self._rpc("removeContact", params)
 
     async def update_profile(
         self,
@@ -1058,12 +1113,26 @@ class SignalClient:
         about: str | None = None,
         avatar_path: str | None = None,
         remove_avatar: bool = False,
+        given_name: str | None = None,
+        family_name: str | None = None,
+        about_emoji: str | None = None,
+        mobilecoin_address: str | None = None,
     ) -> None:
         params: dict = {}
-        if name is not None:
-            params["name"] = name
+        # --name is only a CLI alias of --given-name; over JSON-RPC signal-cli
+        # reads "given-name"/"givenName" and silently ignores "name".
+        if given_name is None:
+            given_name = name
+        if given_name is not None:
+            params["givenName"] = given_name
+        if family_name is not None:
+            params["familyName"] = family_name
         if about is not None:
             params["about"] = about
+        if about_emoji is not None:
+            params["aboutEmoji"] = about_emoji
+        if mobilecoin_address is not None:
+            params["mobileCoinAddress"] = mobilecoin_address
         if avatar_path is not None:
             try:
                 params["avatarPath"] = str(validate_send_path(avatar_path))
@@ -1291,9 +1360,18 @@ class SignalClient:
     def get_own_number(self) -> str:
         return self.account
 
-    async def get_user_status(self, recipients: list[str]) -> list[dict]:
-        """Check whether phone numbers are registered Signal users."""
-        result = await self._rpc("getUserStatus", {"recipient": recipients})
+    async def get_user_status(
+        self, recipients: list[str] | None = None, usernames: list[str] | None = None
+    ) -> list[dict]:
+        """Check whether phone numbers and/or usernames are registered Signal users."""
+        if not recipients and not usernames:
+            raise SignalError("Either recipients or usernames must be provided")
+        params: dict = {}
+        if recipients:
+            params["recipient"] = recipients
+        if usernames:
+            params["username"] = usernames
+        result = await self._rpc("getUserStatus", params)
         if not isinstance(result, list):
             raise SignalError(f"getUserStatus returned unexpected result: {result!r}")
         return result
@@ -1474,11 +1552,29 @@ class SignalClient:
         else:
             raise SignalError("Either recipient or group_id must be provided")
 
-    async def update_contact(self, number: str, name: str) -> None:
-        await self._rpc("updateContact", {
-            "recipient": number,
+    async def update_contact(
+        self,
+        number: str,
+        name: str | None = None,
+        given_name: str | None = None,
+        family_name: str | None = None,
+        nick_given_name: str | None = None,
+        nick_family_name: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        fields = {
             "name": name,
-        })
+            "givenName": given_name,
+            "familyName": family_name,
+            "nickGivenName": nick_given_name,
+            "nickFamilyName": nick_family_name,
+            "note": note,
+        }
+        params = {k: v for k, v in fields.items() if v is not None}
+        if not params:
+            raise SignalError("Provide at least one of name, given_name, family_name, "
+                              "nick_given_name, nick_family_name, note")
+        await self._rpc("updateContact", {"recipient": number, **params})
 
     async def leave_group(
         self, group_id: str, admins: list[str] | None = None, delete: bool = False
@@ -1675,7 +1771,8 @@ class SignalClient:
     # ── Identity / safety numbers ─────────────────────────────────────────────
 
     async def list_identities(self, number: str | None = None) -> list[dict]:
-        params = {"recipient": number} if number else {}
+        # ListIdentitiesCommand reads "number" (-n/--number), not "recipient".
+        params = {"number": number} if number else {}
         result = await self._rpc("listIdentities", params or None)
         return result if isinstance(result, list) else [result] if result else []
 

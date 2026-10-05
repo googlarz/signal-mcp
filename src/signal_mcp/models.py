@@ -74,10 +74,25 @@ class Contact:
     profile_name: str | None = None
     about: str | None = None
     blocked: bool = False
+    username: str | None = None
+    nick_name: str | None = None
+    nick_given_name: str | None = None
+    nick_family_name: str | None = None
+    note: str | None = None
+    about_emoji: str | None = None
+    has_avatar: bool = False
+    is_archived: bool = False
+    is_hidden: bool = False
+    profile_sharing: bool = False
+    unregistered: bool = False
+    message_expiration_time: int = 0
 
     @property
     def display_name(self) -> str:
-        # Prefer explicit name set by user, then profile full name, then number
+        # Prefer the user's nickname (Signal apps show it first), then explicit
+        # contact name, then profile full name, then number
+        if self.nick_name and self.nick_name.strip():
+            return self.nick_name.strip()
         if self.name and self.name.strip():
             return self.name.strip()
         parts = " ".join(filter(None, [self.given_name, self.family_name])).strip()
@@ -86,7 +101,7 @@ class Contact:
         return self.profile_name or self.number or ""
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "number": self.number,
             "uuid": self.uuid,
             "name": self.name,
@@ -97,6 +112,22 @@ class Contact:
             "blocked": self.blocked,
             "display_name": self.display_name,
         }
+        optional = {
+            "username": self.username,
+            "nick_name": self.nick_name,
+            "nick_given_name": self.nick_given_name,
+            "nick_family_name": self.nick_family_name,
+            "note": self.note,
+            "about_emoji": self.about_emoji,
+            "has_avatar": self.has_avatar,
+            "is_archived": self.is_archived,
+            "is_hidden": self.is_hidden,
+            "profile_sharing": self.profile_sharing,
+            "unregistered": self.unregistered,
+            "message_expiration_time": self.message_expiration_time,
+        }
+        d.update({k: v for k, v in optional.items() if v})
+        return d
 
 
 @dataclass
