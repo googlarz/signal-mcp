@@ -25,13 +25,12 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: astral-sh/setup-uv@v10.2.0
       - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
       - name: Check package metadata and README rendering
-        run: uvx twine check dist/*
+        run: pipx run twine check dist/*
 
   publish:
     if: github.event_name == 'release'
