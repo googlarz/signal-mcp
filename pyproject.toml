@@ -1,6 +1,6 @@
 [project]
 name = "signal-mcp"
-version = "1.42.0"
+version = "1.43.0"
 description = "Signal for AI assistants: an MCP server and CLI with searchable local message history, groups, polls and 80+ tools on top of signal-cli. 100% local."
 readme = "README.md"
 requires-python = ">=3.12"

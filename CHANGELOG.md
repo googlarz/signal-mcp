@@ -4,6 +4,8 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.43.0] - 2026-10-05
+
 ### Added
 
 - **Formatting in direct messages**: `send_message` takes `formatting: true` (CLI: `send --format`), same markers and same off-by-default rule as for groups and notes.
