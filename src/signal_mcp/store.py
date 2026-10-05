@@ -133,6 +133,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE messages ADD COLUMN recipient TEXT")
         except sqlite3.OperationalError:
             pass  # column already exists
+        # Migrate: optional incoming-message data (mentions, previews, polls, ...) as JSON
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)")}
+        if "extras" not in cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN extras TEXT")
         # Indexes on recipient must be created after migration (column may have just been added)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient)"
@@ -147,6 +151,10 @@ def init_db() -> None:
     _initialized_paths.add(db_key)
 
 
+def _extras_json(msg: Message) -> str | None:
+    return json.dumps(msg.extras) if msg.extras else None
+
+
 def save_message(msg: Message) -> bool:
     """Save a message. Returns True if new, False if already stored (duplicate id)."""
     init_db()
@@ -155,11 +163,11 @@ def save_message(msg: Message) -> bool:
         is_read = 1 if msg.recipient is not None else int(msg.is_read)
         cur = conn.execute(
             "INSERT OR IGNORE INTO messages"
-            " (id, sender, recipient, body, timestamp, group_id, quote_id, is_read)"
-            " VALUES (?,?,?,?,?,?,?,?)",
+            " (id, sender, recipient, body, timestamp, group_id, quote_id, is_read, extras)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
             (msg.id, msg.sender, msg.recipient, msg.body,
              int(msg.timestamp.timestamp() * 1000),
-             msg.group_id, msg.quote_id, is_read),
+             msg.group_id, msg.quote_id, is_read, _extras_json(msg)),
         )
         if cur.rowcount == 0:
             return False  # duplicate — AFTER INSERT trigger did NOT fire, FTS unchanged
@@ -192,11 +200,11 @@ def save_messages_batch(messages: list[Message]) -> tuple[int, int]:
             is_read = 1 if msg.recipient is not None else int(msg.is_read)
             cur = conn.execute(
                 "INSERT OR IGNORE INTO messages"
-                " (id, sender, recipient, body, timestamp, group_id, quote_id, is_read)"
-                " VALUES (?,?,?,?,?,?,?,?)",
+                " (id, sender, recipient, body, timestamp, group_id, quote_id, is_read, extras)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
                 (msg.id, msg.sender, msg.recipient, msg.body,
                  int(msg.timestamp.timestamp() * 1000),
-                 msg.group_id, msg.quote_id, is_read),
+                 msg.group_id, msg.quote_id, is_read, _extras_json(msg)),
             )
             if cur.rowcount == 0:
                 skipped += 1
@@ -359,6 +367,32 @@ def update_message_body(target_timestamp_ms: int, new_body: str, sender: str | N
             "INSERT INTO messages_fts(rowid, id, body, sender) VALUES (?, ?, ?, ?)",
             (row["rowid"], row["id"], new_body, row["sender"]),
         )
+
+
+def mark_deleted(target_timestamp_ms: int | None, senders: list, flag: dict) -> bool:
+    """Merge *flag* into the extras of the message (timestamp, any of *senders*).
+
+    Used for incoming remote/admin deletes. The body is left intact on purpose
+    (see SignalClient._apply_delete). Returns True if a message was flagged.
+    """
+    senders = [s for s in senders if s]
+    if not target_timestamp_ms or not senders:
+        return False
+    init_db()
+    with _db() as conn:
+        ph = ",".join("?" * len(senders))
+        row = conn.execute(
+            f"SELECT id, extras FROM messages WHERE timestamp = ? AND sender IN ({ph})",
+            [target_timestamp_ms, *senders],
+        ).fetchone()
+        if not row:
+            return False
+        extras = json.loads(row["extras"]) if row["extras"] else {}
+        conn.execute(
+            "UPDATE messages SET extras = ? WHERE id = ?",
+            (json.dumps(extras | flag), row["id"]),
+        )
+    return True
 
 
 _SQLITE_MAX_VARS = 500  # well under SQLite's 999-variable limit
@@ -556,7 +590,7 @@ def export_messages(
                     }
                     for a in m.attachments
                 ],
-            }
+            } | m.extras
             for m in get_messages_for_export(recipient, since)
         ]
 
@@ -660,6 +694,7 @@ def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list
         )
     cols = rows[0].keys()
     has_recipient = "recipient" in cols
+    has_extras = "extras" in cols
     return [
         Message(
             id=r["id"],
@@ -671,6 +706,7 @@ def _rows_to_messages(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list
             quote_id=r["quote_id"],
             is_read=bool(r["is_read"]),
             attachments=att_map.get(r["id"], []),
+            extras=json.loads(r["extras"]) if has_extras and r["extras"] else {},
         )
         for r in rows
     ]
