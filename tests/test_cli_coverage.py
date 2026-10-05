@@ -48,6 +48,9 @@ def _mock_client(**overrides):
     client._daemon_alive = AsyncMock(return_value=True)
     client._ensure_contact_cache = AsyncMock()
     client._ensure_group_cache = AsyncMock()
+    client._ensure_caches = AsyncMock()
+    client.resolve_name = lambda n: n
+    client.resolve_group_name = lambda g: g
     client.account = "+10000000000"
     for k, v in overrides.items():
         setattr(client, k, v)

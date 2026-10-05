@@ -44,6 +44,9 @@ def _mock_client(**overrides):
     client._daemon_alive = AsyncMock(return_value=True)
     client._ensure_contact_cache = AsyncMock()
     client._ensure_group_cache = AsyncMock()
+    client._ensure_caches = AsyncMock()
+    client.resolve_name = lambda n: n
+    client.resolve_group_name = lambda g: g
     client.account = "+10000000000"
     for k, v in overrides.items():
         setattr(client, k, v)
@@ -795,3 +798,21 @@ def test_daemon_clears_pid_on_sigterm(monkeypatch, runner, tmp_path):
     assert result.exit_code == 0
     assert not pid_file.exists()
     fake_proc.terminate.assert_called_once()
+
+
+def test_history_and_search_show_resolved_names(runner):
+    msgs = [_msg(sender="+15550105", body="bringing the jerseys", group_id="grpDEMO==")]
+    names = {"+15550105": "Mikko Laine"}
+    client = _mock_client(
+        get_conversation=AsyncMock(return_value=msgs),
+        search_messages=AsyncMock(return_value=msgs),
+    )
+    client.resolve_name = lambda n: names.get(n, n)
+    client.resolve_group_name = lambda g: {"grpDEMO==": "U12 Football"}.get(g, g)
+    with patch("signal_mcp.cli.SignalClient", return_value=client):
+        for args in (["history", "grpDEMO=="], ["search", "jerseys"]):
+            out = runner.invoke(cli, args).output
+            assert "Mikko Laine: bringing the jerseys" in out
+            assert "[U12 Football]" in out
+            assert "+15550105" not in out
+    client._ensure_caches.assert_awaited()

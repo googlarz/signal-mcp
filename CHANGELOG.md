@@ -2,6 +2,17 @@
 
 All notable changes to signal-mcp are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **`signal-mcp history` and `signal-mcp search` printed bare phone numbers** and truncated group ids even though the README promised names. They now show contact/profile names and group names (as `conversations` and the MCP tools already did).
+
+### Changed
+
+- PyPI package metadata: a clearer one-line description, keywords, classifiers and project links (homepage, issues, changelog).
+- README rewritten around what you get first: example conversation, real terminal output, quick start, a "what you can ask" table, a privacy section, an honest comparison with other Signal MCP servers, troubleshooting, and the previously undocumented scheduling/webhook tools and CLI commands.
+
 ## [1.40.0] — 2026-10-05
 
 Closes the gap between signal-cli and the MCP tools: a command-by-command and field-by-field comparison found that signal-mcp discarded most incoming-message data and exposed only part of several commands' options.

@@ -190,13 +190,19 @@ def receive(watch: bool, timeout: int, interval: int, as_json: bool, webhook_url
         sys.exit(1)
 
 
-def _print_message(msg):
+def _print_message(msg, client=None):
+    """Print one message; with *client*, resolve sender and group to names (cache must be loaded)."""
     if msg.receipt_type:
         click.echo(f"[{msg.timestamp.strftime('%Y-%m-%d %H:%M:%S')}] ← {msg.receipt_type} receipt from {msg.sender}")
         return
     ts = msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    sender = client.resolve_name(msg.sender) if client else msg.sender
     group = f" [group:{msg.group_id[:8]}…]" if msg.group_id else ""
-    click.echo(f"[{ts}]{group} {msg.sender}: {msg.body}")
+    if client and msg.group_id:
+        group_name = client.resolve_group_name(msg.group_id)
+        if group_name != msg.group_id:
+            group = f" [{group_name}]"
+    click.echo(f"[{ts}]{group} {sender}: {msg.body}")
     for att in msg.attachments:
         click.echo(f"  📎 {Path(att.filename).name} → {att.local_path}")
 
@@ -301,8 +307,9 @@ def history(recipient: str, limit: int, offset: int, since: str | None, as_json:
             if as_json:
                 click.echo(json.dumps([m.to_dict() for m in messages], indent=2))
             else:
+                await client._ensure_caches()
                 for msg in messages:
-                    _print_message(msg)
+                    _print_message(msg, client)
     try:
         run(_run())
     except SignalError as e:
@@ -487,8 +494,9 @@ def search(query: str, sender: str | None, limit: int, offset: int,
             if as_json:
                 click.echo(json.dumps([m.to_dict() for m in messages], indent=2))
             else:
+                await client._ensure_caches()
                 for msg in messages:
-                    _print_message(msg)
+                    _print_message(msg, client)
     try:
         run(_run())
     except SignalError as e:

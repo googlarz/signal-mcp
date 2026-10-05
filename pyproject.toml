@@ -1,11 +1,21 @@
 [project]
 name = "signal-mcp"
 version = "1.40.0"
-description = "Complete Signal MCP server and CLI via signal-cli"
+description = "Signal for AI assistants: an MCP server and CLI with searchable local message history, groups, polls and 80+ tools on top of signal-cli. 100% local."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+keywords = ["signal", "signal-cli", "mcp", "model-context-protocol", "claude", "ai-agents", "messaging", "chat", "privacy", "local-first", "sqlite", "fts5", "cli"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -14,10 +24,15 @@ dependencies = [
     "click>=8.3.3",
     "cryptography>=47.0.0",
     "httpx>=0.28.1",
-    # server.py uses the 1.x lowlevel decorator API (@app.list_tools / @app.call_tool),
-    # which mcp 2.0 removed in favour of Server(on_list_tools=..., on_call_tool=...).
+    # server.py is written against the mcp 2.x low-level handler API.
     "mcp>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/googlarz/signal-mcp"
+Repository = "https://github.com/googlarz/signal-mcp"
+Issues = "https://github.com/googlarz/signal-mcp/issues"
+Changelog = "https://github.com/googlarz/signal-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 signal-mcp = "signal_mcp.cli:cli"

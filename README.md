@@ -30,6 +30,14 @@ Claude  Sent to "U12 Team": "@Daniel we'll be there at 10:15 👍"
 
 <sup>Illustrative example with made-up names.</sup>
 
+The same data from your terminal — this is real `signal-mcp` output on a demo database:
+
+<p align="center"><img src="https://raw.githubusercontent.com/googlarz/signal-mcp/main/docs/demo.svg" alt="Terminal: signal-mcp conversations and search, with contact and group names resolved" width="860"></p>
+
+## Why it exists
+
+I built signal-mcp for a very ordinary reason: I'm a parent in my kids' football-team group chats and wanted my assistant to keep up with them — kickoff times, who's bringing the jerseys, which tag to set. I use it every day, against my own real Signal account, which is why safety (read-only mode, no file exfiltration, nothing leaving the machine) is built in rather than bolted on.
+
 ## Why you want this
 
 signal-cli is excellent at the Signal protocol and deliberately minimal everywhere else. signal-mcp adds the parts you need to actually *use* your messages:
@@ -72,6 +80,20 @@ Prefer the terminal? Everything is also a command — `signal-mcp send`, `search
 - **Irreversible means confirmed.** Clearing the local store or terminating a group requires an explicit `confirm`.
 - **Careful with secrets.** The Signal Desktop import decrypts into a private (`0700`) folder, passes the key over stdin rather than the command line, and cleans up even when interrupted.
 - **Honest caveat.** Messages from other people are untrusted text that an AI will read. Read-only mode (or just not granting write access) is the strongest defence against a hostile message trying to steer your assistant.
+
+## How it compares
+
+There are a handful of other Signal MCP servers. Checked in October 2026 from each project's README (a cell says "not stated" when the README doesn't say):
+
+| Project | How it works | Keeps history | Search | Safety controls |
+|---|---|---|---|---|
+| **signal-mcp** (this) | signal-cli daemon + local SQLite | Yes, plus Signal Desktop import | Full-text (FTS5), sender and date filters | Read-only mode, file-send allow-list |
+| [rymurr/signal-mcp](https://github.com/rymurr/signal-mcp) | signal-cli subprocess | not stated | not stated | not stated |
+| [stefanstranger/signal-mcp-server](https://github.com/stefanstranger/signal-mcp-server) | Reads Signal Desktop's database (read-only) | Desktop's own database | Text search within one chat | Read-only by design |
+| [hypernormal/signal-cli-mcp](https://github.com/hypernormal/signal-cli-mcp) | signal-cli daemon (Go) | No — send-only by design | No | Send-only |
+| [BarbellDwarf/signal-mcp-server](https://github.com/BarbellDwarf/signal-mcp-server) | signal-cli-rest-api (Docker) | not stated | not stated | Recipient allow-list, per-tool disabling |
+
+What sets signal-mcp apart in that field is the combination: live send/receive **and** a searchable local archive **and** a safety switch, in one tool. What others do that it doesn't (yet): recipient allow-lists and per-tool disabling (BarbellDwarf) and inbound sender allow-lists (jeremyschlatter/signal-mcpl).
 
 ## What's new
 
