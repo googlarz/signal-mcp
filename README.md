@@ -1,4 +1,10 @@
+<div align="center">
+
 # signal-mcp
+
+**Give your AI assistant a memory for Signal — privately, on your own machine.**
+
+Searchable message history · 80+ tools · groups, polls, mentions, labels · read-only mode · 100% local
 
 [![Tests](https://github.com/googlarz/signal-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/googlarz/signal-mcp/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/signal-mcp)](https://pypi.org/project/Signal-MCP/)
@@ -6,51 +12,71 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Glama](https://img.shields.io/badge/Glama-A-brightgreen)](https://glama.ai/mcp/servers/googlarz/signal-mcp)
 
-signal-mcp is a layer on top of [signal-cli](https://github.com/AsamK/signal-cli) that adds everything it's missing: persistent message history, full-text search, a usable conversation view, contact name resolution, and an MCP server so Claude can read, search, and act on your Signal messages. 100% local — no cloud, no third-party services.
+</div>
 
-> **v1.29.0** — New `sync_desktop` / `sync-desktop`: incremental sync from Signal Desktop — fast on repeat calls, imports only new messages since the last run. Plus: incoming edits update the stored copy in-place, fixes for 500+ conversation crashes, improved store reliability.
+signal-mcp is an [MCP](https://modelcontextprotocol.io) server and CLI built on [signal-cli](https://github.com/AsamK/signal-cli). It links to your existing Signal account as a device, keeps every message in a local database you can search, and lets an AI assistant like Claude read, search and — if you allow it — act on your chats. No cloud service, no third party: your messages stay on your computer.
 
-## What signal-cli is missing — and what signal-mcp adds
+```text
+You     What did the coach say about Sunday, and did anyone offer to bring the jerseys?
 
-**No history.** signal-cli delivers a message and forgets it. signal-mcp stores every sent and received message — including messages sent from your phone — in a local SQLite database. It stays there. You can search it, browse it, export it, and ask Claude about it.
+Claude  Daniel (coach): meet 10:15 at the hall, kickoff 11:00, ten boys confirmed.
+        Elena and Mikko both replied — they'll bring the jerseys. Nothing needs
+        an answer from you except confirming your son is coming.
 
-**No search.** signal-mcp adds an FTS5 full-text index. Find any message by keyword, filter by sender, page through results.
+You     Tell the group we'll be there, and tag the coach.
 
-**No conversation view.** signal-cli has no concept of a thread. signal-mcp gives you paginated history per contact or group, unread counts, and last-message previews across all your chats.
+Claude  Sent to "U12 Team": "@Daniel we'll be there at 10:15 👍"
+```
 
-**Raw phone numbers everywhere.** signal-mcp resolves `+12025551234` → `Anna Schmidt` in all output.
+<sup>Illustrative example with made-up names.</sup>
 
-**Manual daemon management.** signal-mcp auto-starts the daemon on first use, restarts it if it crashes, and can install a background service (macOS LaunchAgent or Linux systemd) that captures every incoming message — even when you're not at your computer.
+## Why you want this
 
-## CLI and MCP: use whichever fits the task
+signal-cli is excellent at the Signal protocol and deliberately minimal everywhere else. signal-mcp adds the parts you need to actually *use* your messages:
 
-The CLI and MCP server share the same store and daemon. You don't have to choose one:
+- **A memory.** signal-cli delivers a message and forgets it. signal-mcp stores everything — including messages you sent from your phone — in local SQLite, and can import your whole Signal Desktop history.
+- **Search that works.** Full-text search across all chats, filterable by sender and date range.
+- **Real conversations.** Paginated threads, unread counts, last-message previews — and names instead of `+12025551234`, even for group members who aren't in your contacts.
+- **Everything Signal shows you.** @mentions (resolved to names), polls, pins, link previews, quotes, voice notes, stickers, group member labels, join requests — nothing signal-cli reports is thrown away.
+- **Full control when you want it.** Send, reply, react, edit, delete, manage groups, schedule messages, set your profile — with a read-only switch for when you don't.
+- **Zero babysitting.** The daemon starts itself and restarts if it crashes; an optional background service captures messages while Claude isn't running; `signal-mcp doctor` tells you what's wrong if something is.
 
-| Task | How |
+## Quick start
+
+```bash
+brew install signal-cli                  # Linux: see Setup below
+signal-cli link --name "MyMac"           # scan the QR code: Signal → Settings → Linked Devices
+uv tool install signal-mcp
+claude mcp add signal -- signal-mcp serve
+```
+
+Restart Claude Code and ask *"check my Signal messages"*. Works with any MCP client (Claude Code and Claude Desktop are what it is developed and tested with) — config snippets are in [Setup](#setup).
+
+## What you can ask
+
+| | |
 |---|---|
-| Quick send from terminal or a cron job | `signal-mcp send +49... "done"` |
-| Set up background message capture (once) | `signal-mcp install-service` |
-| Import full history from Signal Desktop (once) | `signal-mcp import-desktop` |
-| Export a conversation to CSV | `signal-mcp export --recipient +49... --format csv` |
-| Check unread messages and conversations | `signal-mcp conversations` |
-| "What did I miss while I was offline?" | Claude via MCP |
-| "Find every message mentioning the invoice" | Claude via MCP |
-| "Summarize my week with Marco and draft a reply" | Claude via MCP |
-| "Who in my contacts hasn't messaged me in a month?" | Claude via MCP |
-| "Send the team: standup in 5 minutes" | Claude via MCP or CLI |
+| **Catch up** | "What did I miss while I was offline?" · "Summarize the parents' group since Monday." |
+| **Find** | "Find every message about the invoice." · "What did Anna say about the trip last week?" |
+| **Act** | "Reply to Marco that Thursday works." · "Remind the team at 9:00 tomorrow." · "Create a poll for Friday's dinner." |
+| **Groups** | "Who's waiting to join the group?" · "Set my label in the football group to my son's name." |
+| **Housekeeping** | "Export my chat with Mom as CSV." · "Who hasn't messaged me in a month?" · "Delete that message for everyone." |
 
-## Features
+Prefer the terminal? Everything is also a command — `signal-mcp send`, `search`, `conversations`, `export`, … ([CLI usage](#cli-usage)). The CLI and MCP server share one store and one daemon.
 
-- **Persistent SQLite store** — every message saved locally, survives restarts
-- **FTS5 full-text search** — instant search across entire history
-- **Signal Desktop import** — migrate your complete history in one command (macOS/Linux/Windows)
-- **Background service** — captures messages automatically, even when Claude isn't running
-- **Export** — JSON or CSV with recipient and date filters
-- **Contact name resolution** — phone numbers resolved to names everywhere
-- **72 MCP tools** — complete signal-cli coverage (see [coverage matrix](#signal-cli-coverage))
-- **Incoming edit handling** — when contacts edit their messages, the stored copy updates in-place
-- **Full CLI** — all the above without Claude, from your terminal
-- **100% local** — your data never leaves your machine
+## Private and safe by design
+
+- **100% local.** Messages live in SQLite on your disk; the daemon listens on localhost only. There is no signal-mcp cloud. (The only things that leave your machine are what you send through Signal itself and an optional webhook you configure.)
+- **Read-only mode.** `SIGNAL_MCP_READONLY=1` hides and blocks every tool that sends, edits, deletes or changes settings — for assistants you don't fully trust with your account. See [Step 7](#step-7--optional-read-only-mode).
+- **No file exfiltration.** Anything that uploads a local file (attachments, avatars, link-preview images, sticker packs) only reads from an allow-list of folders (`SIGNAL_MCP_SEND_ROOTS`; default: your attachments folder, Downloads, Desktop, Documents) and never from hidden files or folders — so a message that says "send me `~/.ssh/id_ed25519`" can't talk an assistant into it.
+- **Irreversible means confirmed.** Clearing the local store or terminating a group requires an explicit `confirm`.
+- **Careful with secrets.** The Signal Desktop import decrypts into a private (`0700`) folder, passes the key over stdin rather than the command line, and cleans up even when interrupted.
+- **Honest caveat.** Messages from other people are untrusted text that an AI will read. Read-only mode (or just not granting write access) is the strongest defence against a hostile message trying to steer your assistant.
+
+## What's new
+
+**1.40** closes the gap with signal-cli: incoming @mentions, polls, pins, previews and quotes are now captured; group member labels, bans, permissions and join requests; contact nicknames and notes; link previews, voice notes and stories on the sending side; and a fix that finally copies received attachments. See the [changelog](CHANGELOG.md).
+
 
 ## Setup
 
