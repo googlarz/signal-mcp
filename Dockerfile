@@ -28,7 +28,7 @@ RUN curl -fsSL \
 
 # ── signal-mcp ─────────────────────────────────────────────────────────────────
 WORKDIR /app
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml uv.lock* README.md ./
 COPY src/ ./src/
 
 RUN python3 -m venv /opt/venv && \
