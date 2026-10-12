@@ -4,6 +4,17 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.43.1] - 2026-10-12
+
+### Added
+
+- **`attachment_dimensions` and `attachment_blurhash`** on `send_attachment` and `send_group_attachment`: a displayed size (`WIDTHxHEIGHT`) and a BlurHash per file, in file order (`""` skips one), so clients show a size and a preview before the file downloads. Needs signal-cli 0.14.9 or newer.
+
+### Fixed
+
+- **Remote deletes from signal-cli 0.14.9.** signal-cli renamed `remoteDelete.timestamp` to `targetTimestamp` and deprecated the old field. We now read the new one and fall back to the old, so deleted messages keep being flagged in the local archive once the old field is removed.
+- Troubleshooting and Docker image: signal-cli 0.14.9 fixes the `listDevices` crash behind `doctor`'s "Devices readable — ReadTimeout"; the image now ships 0.14.9.
+
 ## [1.43.0] - 2026-10-05
 
 ### Added

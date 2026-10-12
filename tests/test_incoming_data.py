@@ -272,6 +272,17 @@ async def test_receive_direct_applies_remote_delete(client, monkeypatch):
     assert _store_mod.get_conversation(ALICE)[0].extras == {"remote_deleted": True}
 
 
+@respx.mock
+@pytest.mark.asyncio
+async def test_remote_delete_reads_target_timestamp_field(client):
+    # signal-cli 0.14.9 renamed remoteDelete.timestamp to targetTimestamp (old one deprecated).
+    _stored("t1", ALICE, TS - 1)
+    respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok([
+        envelope({"remoteDelete": {"targetTimestamp": TS - 1}})])))
+    assert await client.receive_messages(timeout=1) == []
+    assert _store_mod.search_messages("secret")[0].extras == {"remote_deleted": True}
+
+
 def test_mark_deleted_no_target():
     assert _store_mod.mark_deleted(None, [ALICE], {"remote_deleted": True}) is False
     assert _store_mod.mark_deleted(TS, [None], {"remote_deleted": True}) is False

@@ -512,6 +512,8 @@ class SignalClient:
         story_author: str | None = None,
         story_timestamp: int | None = None,
         voice_note: bool = False,
+        attachment_dimensions: list[str] | None = None,
+        attachment_blurhash: list[str] | None = None,
         no_urgent: bool = False,
         notify_self: bool = False,
     ) -> None:
@@ -548,6 +550,10 @@ class SignalClient:
             params["storyAuthor"] = story_author
         if voice_note:
             params["voiceNote"] = True
+        if attachment_dimensions:
+            params["attachmentDimensions"] = attachment_dimensions
+        if attachment_blurhash:
+            params["attachmentBlurhash"] = attachment_blurhash
         if no_urgent:
             params["noUrgent"] = True
         if notify_self:
@@ -916,7 +922,11 @@ class SignalClient:
         dm = dm or {}
         if remote := dm.get("remoteDelete"):
             await asyncio.to_thread(
-                _store.mark_deleted, remote.get("timestamp"), senders, {"remote_deleted": True}
+                _store.mark_deleted,
+                # signal-cli 0.14.9 renamed timestamp to targetTimestamp and deprecated the old one
+                remote.get("targetTimestamp") or remote.get("timestamp"),
+                senders,
+                {"remote_deleted": True},
             )
             return True
         if admin := dm.get("adminDelete"):

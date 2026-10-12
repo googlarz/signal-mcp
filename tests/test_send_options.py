@@ -229,6 +229,23 @@ async def test_end_session(client):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_attachment_dimensions_and_blurhash(client, allowed):
+    route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
+    await client.send_attachment(
+        "+4915112345678", str(allowed), attachment_dimensions=["640x480"], attachment_blurhash=["LEHV6nWB2yk8pyo0adR*.7kCMdnj"],
+    )
+    assert sent(route)["params"] == {
+        "recipient": ["+4915112345678"], "attachment": [str(allowed.resolve())],
+        "attachmentDimensions": ["640x480"], "attachmentBlurhash": ["LEHV6nWB2yk8pyo0adR*.7kCMdnj"],
+    }
+    await client.send_group_attachment("grp==", str(allowed), attachment_dimensions=["10x20"])
+    assert sent(route)["params"] == {
+        "groupId": "grp==", "attachment": [str(allowed.resolve())], "attachmentDimensions": ["10x20"],
+    }
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_attachments_voice_note_and_username(client, allowed):
     route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({"timestamp": 1})))
     await client.send_attachment(None, str(allowed), username="bob.01", voice_note=True)

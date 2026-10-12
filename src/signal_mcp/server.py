@@ -119,8 +119,13 @@ _DELIVERY_PROPS = {
 _VOICE_NOTE_PROPS = {
     "voice_note": {"type": "boolean", "description": "Mark audio attachments as voice notes (played inline in Signal)", "default": False},
 }
+_ATTACHMENT_META_PROPS = {
+    "attachment_dimensions": {"type": "array", "items": {"type": "string"}, "description": "Displayed size per file, in file order, as 'WIDTHxHEIGHT' (e.g. '1080x1920'); use '' to skip one"},
+    "attachment_blurhash": {"type": "array", "items": {"type": "string"}, "description": "BlurHash per file, in file order, shown by clients while the file downloads; use '' to skip one"},
+}
 _SEND_OPTION_KEYS = tuple({
     **_QUOTE_PROPS, **_PREVIEW_PROPS, **_STORY_REPLY_PROPS, **_DELIVERY_PROPS, **_VOICE_NOTE_PROPS,
+    **_ATTACHMENT_META_PROPS,
 })
 
 
@@ -409,7 +414,7 @@ TOOLS = [
             ' files sent together (one of the two is required). Files must lie inside the allowed send folders (default: '
             'the signal-mcp attachments folder, ~/Downloads, ~/Desktop, ~/Documents; override with SIGNAL_MCP_SEND_ROOTS)'
             ' and not be hidden, else an error is returned. caption: text shown with the files (default empty); '
-            'view_once=true lets the recipient open media only once; voice_note=true marks audio as a voice note. '
+            'view_once=true lets the recipient open media only once; voice_note=true marks audio as a voice note. attachment_dimensions (WIDTHxHEIGHT per file, in order) and attachment_blurhash (BlurHash per file, in order) give clients a size and a preview before download; an empty string skips a file. '
             'Reply/quote: quote_author (E.164) + quote_timestamp (ms) of the original; quote_message (quoted text; '
             'default: looked up in the local store), quote_mentions ({start, length, author}), quote_text_styles '
             "('start:length:STYLE') and quote_attachments ('contentType[:filename[:previewFile]]') only shape the quote "
@@ -428,6 +433,7 @@ TOOLS = [
                 "caption": {"type": "string", "description": "Optional caption text shown below the attachment", "default": ""},
                 "view_once": {"type": "boolean", "description": "Send as view-once media — recipient can only view it once before it disappears", "default": False},
                 **_VOICE_NOTE_PROPS,
+                **_ATTACHMENT_META_PROPS,
                 **_QUOTE_PROPS,
                 **_DELIVERY_PROPS,
             },
@@ -442,7 +448,7 @@ TOOLS = [
             'the allowed send folders (default: the signal-mcp attachments folder, ~/Downloads, ~/Desktop, ~/Documents; '
             'override with SIGNAL_MCP_SEND_ROOTS) and not be hidden, else an error is returned. caption: text shown with '
             'the files (default empty); view_once=true lets each member open media only once; voice_note=true marks audio'
-            ' as a voice note. Reply/quote: quote_author (E.164) + quote_timestamp (ms) of the original; quote_message '
+            ' as a voice note. attachment_dimensions (WIDTHxHEIGHT per file, in order) and attachment_blurhash (BlurHash per file, in order) give clients a size and a preview before download; an empty string skips a file. Reply/quote: quote_author (E.164) + quote_timestamp (ms) of the original; quote_message '
             '(quoted text; default: looked up in the local store), quote_mentions ({start, length, author}), '
             "quote_text_styles ('start:length:STYLE') and quote_attachments ('contentType[:filename[:previewFile]]') only"
             ' shape the quote bubble. no_urgent=true sends without a push notification; notify_self=true delivers a '
@@ -459,6 +465,7 @@ TOOLS = [
                 "caption": {"type": "string", "description": "Optional caption text shown below the attachment", "default": ""},
                 "view_once": {"type": "boolean", "description": "Send as view-once media — each recipient can only view it once", "default": False},
                 **_VOICE_NOTE_PROPS,
+                **_ATTACHMENT_META_PROPS,
                 **_QUOTE_PROPS,
                 **_DELIVERY_PROPS,
             },
