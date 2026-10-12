@@ -233,7 +233,7 @@ Start with `signal-mcp doctor` — it checks signal-cli, your linked account, th
 
 | Symptom | Cause and fix |
 |---|---|
-| `doctor` reports `Devices readable — ReadTimeout`, or `list_devices` hangs | A bug in **signal-cli 0.14.8** (`listDevices` crashes inside libsignal). Fixed upstream, not yet released; everything else works. Upgrade signal-cli once 0.14.9 ships. |
+| `doctor` reports `Devices readable — ReadTimeout`, or `list_devices` hangs | A bug in **signal-cli 0.14.8** (`listDevices` crashes inside libsignal). Fixed in signal-cli 0.14.9: upgrade (`brew upgrade signal-cli`) and restart the daemon. |
 | "Unknown sender" / bare numbers in a group | Names come from your contacts, then Signal profiles (also for non-contacts), then Signal Desktop. Someone with none of these stays a number — `import-desktop` brings in Desktop's names. |
 | `import-desktop` fails on Linux | Needs `sqlcipher` and `libsecret-tools`, and an unlocked GNOME Keyring. KWallet-only setups aren't supported. |
 | Messages missing while Claude wasn't running | Install the background service: `signal-mcp install-service`. |
