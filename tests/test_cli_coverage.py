@@ -301,12 +301,17 @@ def test_status_detect_account_failure(runner):
 
 # ── daemon command ────────────────────────────────────────────────────────────
 
-def test_daemon_detect_account_success(runner):
-    """daemon command: detect_account succeeds, prints startup message, subprocess is mocked."""
+def test_daemon_detect_account_success(runner, tmp_path, monkeypatch):
+    """daemon command: detect_account succeeds, prints startup message, signal-cli is mocked.
+
+    Popen (not subprocess.run) is what daemon calls: unmocked, this started a real
+    signal-cli and its `finally` deleted the real ~/.local/share/signal-mcp/daemon.pid."""
+    monkeypatch.setattr("signal_mcp.config.DAEMON_PID_FILE", tmp_path / "daemon.pid")
     with patch("signal_mcp.cli.detect_account", return_value="+1test"), \
-         patch("signal_mcp.cli.subprocess.run", side_effect=KeyboardInterrupt()):
+         patch("signal_mcp.cli.subprocess.Popen", return_value=MagicMock(pid=4242)) as popen:
         result = runner.invoke(cli, ["daemon"])
     assert "Starting signal-cli daemon" in result.output
+    popen.assert_called_once()
 
 
 def test_daemon_detect_account_failure(runner):
