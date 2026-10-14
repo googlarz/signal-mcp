@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 
 from . import __version__, store as _store
-from .client import _E164_RE, SignalClient, SignalError
+from .client import _E164_RE, SignalClient, SignalCliNotFoundError, SignalError
 from .config import (
     DAEMON_PORT,
     check_signal_cli_version,
@@ -21,6 +21,7 @@ from .config import (
     get_account_data_dir,
     is_service_installed,
     save_daemon_pid,
+    signal_cli_not_found_message,
 )
 
 
@@ -180,6 +181,8 @@ def receive(watch: bool, timeout: int, interval: int, as_json: bool, webhook_url
                         use_desktop = False
                         if not as_json:
                             click.echo("[watch] falling back to signal-cli receive", err=True)
+                    except SignalCliNotFoundError:
+                        raise  # retrying can't help; exit with the error instead of logging it every poll
                     except Exception as e:
                         if not as_json:
                             click.echo(f"[watch] receive error: {e}", err=True)
@@ -668,11 +671,15 @@ def daemon(port: int):
 
     click.echo(f"Starting signal-cli daemon for {account} on port {port}…")
     click.echo("Press Ctrl+C to stop.")
-    proc = subprocess.Popen([
-        "signal-cli", "-u", account,
-        "daemon", f"--http", f"localhost:{port}",
-        "--no-receive-stdout",
-    ])
+    try:
+        proc = subprocess.Popen([
+            "signal-cli", "-u", account,
+            "daemon", f"--http", f"localhost:{port}",
+            "--no-receive-stdout",
+        ])
+    except FileNotFoundError:
+        click.echo(f"Error: {signal_cli_not_found_message()}", err=True)
+        sys.exit(1)
     save_daemon_pid(proc.pid)
 
     def _handle_sigterm(signum, frame):  # pragma: no cover
@@ -927,21 +934,41 @@ def _find_binary_args() -> list[str]:
     return [uv, "run", "--directory", str(Path(__file__).parent.parent.parent), "signal-mcp"]
 
 
+# launchd starts agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin and systemd
+# doesn't read the login shell's PATH either, so the service gets its own PATH.
+_SERVICE_SYSTEM_PATH = ("/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")
+
+
+def _service_path(signal_cli: str | None, binary_args: list[str]) -> str:
+    """PATH for the background service: signal-cli's dir, the service binary's dir, then system dirs."""
+    dirs = []
+    if signal_cli:
+        dirs.append(str(Path(signal_cli).parent))
+    if Path(binary_args[0]).is_absolute():
+        dirs.append(str(Path(binary_args[0]).parent))
+    dirs.extend(_SERVICE_SYSTEM_PATH)
+    return ":".join(dict.fromkeys(dirs))
+
+
 @cli.command("install-service")
 def install_service():
     """Install a background service to auto-receive Signal messages (macOS LaunchAgent or Linux systemd)."""
     import platform
+    import shutil
     binary_args = _find_binary_args()
+    signal_cli = shutil.which("signal-cli")
+    service_path = _service_path(signal_cli, binary_args)
     log_dir = Path.home() / ".local" / "share" / "signal-mcp"
     log_dir.mkdir(parents=True, exist_ok=True)
+    if signal_cli is None:
+        click.echo("Warning: signal-cli not found on PATH, so the service can't start it. "
+                   "Install signal-cli, then rerun: signal-mcp install-service")
 
     if platform.system() == "Darwin":
         plist = plistlib.dumps({
             "Label": PLIST_LABEL,
             "ProgramArguments": [*binary_args, "receive", "--watch"],
-            "EnvironmentVariables": {
-                "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-            },
+            "EnvironmentVariables": {"PATH": service_path},
             "RunAtLoad": True,
             "KeepAlive": True,
             "StandardOutPath": str(log_dir / "watch.log"),
@@ -958,6 +985,7 @@ def install_service():
         else:
             click.echo("Service installed and started.")
             click.echo(f"  Plist : {PLIST_PATH}")
+            click.echo(f"  PATH  : {service_path}")
             click.echo(f"  Log   : {log_dir}/watch.log")
             click.echo("  Messages will be captured automatically on login.")
 
@@ -968,6 +996,7 @@ After=network.target
 
 [Service]
 ExecStart={shlex.join([*binary_args, "receive", "--watch"])}
+Environment="PATH={service_path}"
 Restart=always
 RestartSec=5
 StandardOutput=append:{log_dir}/watch.log
@@ -990,6 +1019,7 @@ WantedBy=default.target
         else:
             click.echo("Service installed and started.")
             click.echo(f"  Unit  : {SYSTEMD_SERVICE_PATH}")
+            click.echo(f"  PATH  : {service_path}")
             click.echo(f"  Log   : {log_dir}/watch.log")
             click.echo("  Messages will be captured automatically on login.")
     else:
