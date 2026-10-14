@@ -4,6 +4,10 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The background service could not find a signal-cli installed outside a few fixed directories.** launchd starts agents with `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, and systemd doesn't read your shell's PATH either. The LaunchAgent had a fixed Homebrew PATH and the systemd unit had none. If the watcher had to start signal-cli itself, it crashed with `FileNotFoundError: 'signal-cli'`, and `KeepAlive` restarted it in a loop that filled `watch.err`. `install-service` now builds the service's PATH when you run it: signal-cli's directory (from your current PATH), signal-mcp's directory, then the standard system directories. The LaunchAgent gets it as `EnvironmentVariables` and the systemd unit as `Environment=PATH=`. If signal-cli isn't on your PATH at install time, `install-service` warns you. Rerun `signal-mcp install-service` to pick this up.
+
 ## [1.43.1] - 2026-10-12
 
 ### Added

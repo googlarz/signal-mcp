@@ -462,6 +462,7 @@ def test_install_service_darwin_success(runner, tmp_path, monkeypatch):
 
     with patch("platform.system", return_value="Darwin"), \
          patch("signal_mcp.cli._find_binary_args", return_value=["/opt/homebrew/bin/uv", "run", "--directory", "/tmp/signal mcp", "signal-mcp"]), \
+         patch("shutil.which", return_value="/opt/signal-cli/bin/signal-cli"), \
          patch("subprocess.run", return_value=mock_result):
         result = runner.invoke(cli, ["install-service"])
 
@@ -473,7 +474,60 @@ def test_install_service_darwin_success(runner, tmp_path, monkeypatch):
         "/opt/homebrew/bin/uv", "run", "--directory", "/tmp/signal mcp",
         "signal-mcp", "receive", "--watch",
     ]
-    assert plist["EnvironmentVariables"]["PATH"].startswith("/opt/homebrew/bin:")
+    assert plist["EnvironmentVariables"]["PATH"] == (
+        "/opt/signal-cli/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    )
+
+
+def test_install_service_darwin_path_finds_signal_cli(runner, tmp_path, monkeypatch):
+    """launchd runs agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin; the plist must
+    carry the directories signal-cli and signal-mcp are installed in."""
+    import signal_mcp.cli as cli_mod
+    plist_path = tmp_path / "com.signal-mcp.watch.plist"
+    monkeypatch.setattr(cli_mod, "PLIST_PATH", plist_path)
+    installed = {
+        "signal-cli": "/opt/homebrew/bin/signal-cli",
+        "signal-mcp": "/Users/me/.local/bin/signal-mcp",
+    }
+
+    with patch("platform.system", return_value="Darwin"), \
+         patch("shutil.which", side_effect=installed.get), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")):
+        result = runner.invoke(cli, ["install-service"])
+
+    assert result.exit_code == 0
+    assert "Warning" not in result.output
+    with plist_path.open("rb") as handle:
+        plist = plistlib.load(handle)
+    path = "/opt/homebrew/bin:/Users/me/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    assert plist["EnvironmentVariables"] == {"PATH": path}
+    assert f"PATH  : {path}" in result.output
+
+
+def test_install_service_warns_without_signal_cli(runner, tmp_path, monkeypatch):
+    import signal_mcp.cli as cli_mod
+    plist_path = tmp_path / "com.signal-mcp.watch.plist"
+    monkeypatch.setattr(cli_mod, "PLIST_PATH", plist_path)
+
+    with patch("platform.system", return_value="Darwin"), \
+         patch("shutil.which", side_effect={"signal-mcp": "/Users/me/.local/bin/signal-mcp"}.get), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")):
+        result = runner.invoke(cli, ["install-service"])
+
+    assert result.exit_code == 0
+    assert "Warning: signal-cli not found" in result.output
+    with plist_path.open("rb") as handle:
+        plist = plistlib.load(handle)
+    assert plist["EnvironmentVariables"]["PATH"] == (
+        "/Users/me/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    )
+
+
+def test_service_path_dedupes_and_skips_relative_binary():
+    import signal_mcp.cli as cli_mod
+    assert cli_mod._service_path("/usr/bin/signal-cli", ["uv", "run"]) == (
+        "/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin"
+    )
 
 
 def test_install_service_darwin_launchctl_warn(runner, tmp_path, monkeypatch):
@@ -527,13 +581,21 @@ def test_install_service_linux_success(runner, tmp_path, monkeypatch):
     mock_result.returncode = 0
     mock_result.stderr = ""
 
+    installed = {
+        "signal-cli": "/home/me/.local/bin/signal-cli",
+        "signal-mcp": "/home/me/.local/share/uv/tools/bin/signal-mcp",
+    }
     with patch("platform.system", return_value="Linux"), \
-         patch("signal_mcp.cli._find_binary_args", return_value=["/usr/bin/signal-mcp"]), \
+         patch("shutil.which", side_effect=installed.get), \
          patch("subprocess.run", return_value=mock_result):
         result = runner.invoke(cli, ["install-service"])
 
     assert result.exit_code == 0
     assert "installed" in result.output.lower()
+    assert (
+        'Environment="PATH=/home/me/.local/bin:/home/me/.local/share/uv/tools/bin:'
+        '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"\n'
+    ) in service_path.read_text()
 
 
 def test_install_service_unsupported_platform(runner):
