@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 import signal_mcp.store as _store_mod
 from signal_mcp.cli import cli
-from signal_mcp.client import SignalError
+from signal_mcp.client import SignalCliNotFoundError, SignalError
 from signal_mcp.models import Contact, Group, GroupMember, Message, SendResult
 
 
@@ -315,6 +315,18 @@ def test_daemon_detect_account_failure(runner):
         result = runner.invoke(cli, ["daemon"])
     assert result.exit_code == 1
     assert "Error:" in result.output
+
+
+def test_daemon_signal_cli_missing(runner):
+    """daemon command: no signal-cli on PATH → exits 1 with a clear error, not a traceback."""
+    with patch("signal_mcp.cli.detect_account", return_value="+1test"), \
+         patch("signal_mcp.cli.subprocess.Popen", side_effect=FileNotFoundError(2, "No such file", "signal-cli")), \
+         patch("signal_mcp.cli.save_daemon_pid") as save_pid:
+        result = runner.invoke(cli, ["daemon"])
+    assert result.exit_code == 1
+    assert "Error: signal-cli not found on PATH" in result.output
+    assert not isinstance(result.exception, FileNotFoundError)
+    save_pid.assert_not_called()
 
 
 # ── stop command ─────────────────────────────────────────────────────────────
@@ -954,6 +966,25 @@ def test_receive_watch_survives_transient_error(runner):
     assert result.exit_code == 0
     assert "[watch] receive error: socket reset" in result.output
     assert "after recovery" in result.output
+
+
+def test_receive_watch_exits_when_signal_cli_missing(runner):
+    """A missing signal-cli won't fix itself: exit with one clear error, don't log it every poll."""
+    client = _mock_client()
+    client.receive_direct = AsyncMock(side_effect=SignalCliNotFoundError("signal-cli not found on PATH (/usr/bin:/bin)"))
+
+    async def _fast_sleep(_):
+        pass
+
+    with patch("signal_mcp.cli.SignalClient", return_value=client), \
+         patch("signal_mcp.desktop.SIGNAL_DB") as mock_db, \
+         patch("asyncio.sleep", side_effect=_fast_sleep):
+        mock_db.exists.return_value = False
+        result = runner.invoke(cli, ["receive", "--watch"])
+    assert result.exit_code == 1
+    assert "Error: signal-cli not found on PATH (/usr/bin:/bin)" in result.output
+    assert "[watch] receive error" not in result.output
+    client.receive_direct.assert_awaited_once()
 
 
 def test_receive_posts_to_webhook(runner):

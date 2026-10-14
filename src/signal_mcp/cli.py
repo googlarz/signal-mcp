@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 
 from . import __version__, store as _store
-from .client import _E164_RE, SignalClient, SignalError
+from .client import _E164_RE, SignalClient, SignalCliNotFoundError, SignalError
 from .config import (
     DAEMON_PORT,
     check_signal_cli_version,
@@ -21,6 +21,7 @@ from .config import (
     get_account_data_dir,
     is_service_installed,
     save_daemon_pid,
+    signal_cli_not_found_message,
 )
 
 
@@ -180,6 +181,8 @@ def receive(watch: bool, timeout: int, interval: int, as_json: bool, webhook_url
                         use_desktop = False
                         if not as_json:
                             click.echo("[watch] falling back to signal-cli receive", err=True)
+                    except SignalCliNotFoundError:
+                        raise  # retrying can't help; exit with the error instead of logging it every poll
                     except Exception as e:
                         if not as_json:
                             click.echo(f"[watch] receive error: {e}", err=True)
@@ -668,11 +671,15 @@ def daemon(port: int):
 
     click.echo(f"Starting signal-cli daemon for {account} on port {port}…")
     click.echo("Press Ctrl+C to stop.")
-    proc = subprocess.Popen([
-        "signal-cli", "-u", account,
-        "daemon", f"--http", f"localhost:{port}",
-        "--no-receive-stdout",
-    ])
+    try:
+        proc = subprocess.Popen([
+            "signal-cli", "-u", account,
+            "daemon", f"--http", f"localhost:{port}",
+            "--no-receive-stdout",
+        ])
+    except FileNotFoundError:
+        click.echo(f"Error: {signal_cli_not_found_message()}", err=True)
+        sys.exit(1)
     save_daemon_pid(proc.pid)
 
     def _handle_sigterm(signum, frame):  # pragma: no cover

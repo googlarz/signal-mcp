@@ -47,6 +47,16 @@ _ACCOUNTS_JSON = Path.home() / ".local" / "share" / "signal-cli" / "data" / "acc
 _account_cache: str | None = None
 
 
+def signal_cli_not_found_message() -> str:
+    """Error text for a signal-cli that isn't on PATH, naming the PATH searched."""
+    return (
+        f"signal-cli not found on PATH ({os.environ.get('PATH', '')}). "
+        "Install it (macOS: brew install signal-cli, Linux: "
+        "https://github.com/AsamK/signal-cli/releases). If it is installed and this "
+        "is the background service, rerun: signal-mcp install-service"
+    )
+
+
 def detect_account() -> str:
     """Auto-detect linked Signal account number (cached).
 
@@ -70,11 +80,14 @@ def detect_account() -> str:
             pass  # fall through to signal-cli
 
     # Slow fallback: spawn signal-cli (takes ~15s on cold JVM start)
-    result = subprocess.run(
-        ["signal-cli", "listAccounts"],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["signal-cli", "listAccounts"],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        raise RuntimeError(signal_cli_not_found_message()) from None
     if result.returncode != 0:
         raise RuntimeError(f"signal-cli listAccounts failed: {result.stderr.strip()}")
 
