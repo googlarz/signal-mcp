@@ -1004,6 +1004,31 @@ async def test_receive_direct_raises_on_nonzero_exit(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_receive_direct_kills_a_hung_receive_and_releases_the_lock(client, monkeypatch, tmp_path):
+    # `signal-cli receive` waits forever for the config lock when a daemon starts at the same
+    # moment; without a deadline the watch service hangs with it.
+    monkeypatch.setattr(client, "stop_daemon", AsyncMock(return_value=True))
+    monkeypatch.setattr(client_mod, "_RECEIVE_GRACE", 0.05)
+    lock = tmp_path / "receive.lock"
+    monkeypatch.setattr(client_mod, "RECEIVE_LOCK_FILE", lock)
+
+    async def hang():
+        await asyncio.Event().wait()
+
+    proc_mock = MagicMock()
+    proc_mock.communicate = hang
+    proc_mock.kill = MagicMock()
+    proc_mock.wait = AsyncMock(return_value=-9)
+
+    with patch("signal_mcp.client.asyncio.create_subprocess_exec", AsyncMock(return_value=proc_mock)):
+        with pytest.raises(SignalError, match="did not finish"):
+            await client.receive_direct(timeout=0)
+
+    proc_mock.kill.assert_called_once()
+    assert not lock.exists()
+
+
+@pytest.mark.asyncio
 async def test_receive_direct_succeeds_on_zero_exit(client, monkeypatch):
     monkeypatch.setattr(client, "stop_daemon", AsyncMock(return_value=True))
 

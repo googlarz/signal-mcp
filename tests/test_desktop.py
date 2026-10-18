@@ -1,8 +1,11 @@
 """Tests for Signal Desktop importer."""
 
 import json
+import os
 import signal
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime
@@ -1594,7 +1597,7 @@ def test_import_raises_when_lock_already_held(
     _d.SIGNAL_CONFIG = signal_dir / "config.json"
 
     lock_file = tmp_path / "desktop-import.lock"
-    lock_file.write_text("99999")  # fake PID held by "another process"
+    lock_file.write_text(str(os.getpid()))  # a live process holding the lock
 
     try:
         with patch("signal_mcp.desktop.DESKTOP_IMPORT_LOCK_FILE", lock_file), \
@@ -1604,6 +1607,32 @@ def test_import_raises_when_lock_already_held(
         _d.SIGNAL_DB, _d.SIGNAL_CONFIG = original_db, original_cfg
 
     mock_decrypt_db.assert_not_called()
+
+
+def _dead_pid() -> int:
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+@pytest.mark.parametrize("content", [None, "not-a-pid", ""])
+def test_import_lock_from_dead_process_is_taken_over(tmp_path, content):
+    from signal_mcp import desktop as _d
+    # A kill (launchd restart) skips the `finally`, leaving the lock behind; it must not block
+    # every later import and force the watch service onto its fallback forever.
+    lock_file = tmp_path / "desktop-import.lock"
+    lock_file.write_text(str(_dead_pid()) if content is None else content)
+    with patch("signal_mcp.desktop.DESKTOP_IMPORT_LOCK_FILE", lock_file):
+        assert _d._acquire_import_lock() is True
+        assert lock_file.read_text() == str(os.getpid())
+
+
+def test_import_lock_from_live_process_is_respected(tmp_path):
+    from signal_mcp import desktop as _d
+    lock_file = tmp_path / "desktop-import.lock"
+    lock_file.write_text(str(os.getpid()))
+    with patch("signal_mcp.desktop.DESKTOP_IMPORT_LOCK_FILE", lock_file):
+        assert _d._acquire_import_lock() is False
 
 
 @patch("signal_mcp.desktop.detect_account", return_value="+49111")

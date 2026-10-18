@@ -286,6 +286,7 @@ def _resolve_mentions(body: str, mentions: list[dict], name_of) -> str:
 
 _daemon_last_ok_at: float = 0.0   # monotonic timestamp of last confirmed-alive check
 _DAEMON_OK_TTL: float = 5.0       # skip HTTP ping if daemon was healthy within this window
+_RECEIVE_GRACE: float = 30.0      # seconds `signal-cli receive` may overrun its own --timeout
 
 
 class SignalClient:
@@ -979,7 +980,18 @@ class SignalClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout + _RECEIVE_GRACE
+                )
+            except asyncio.TimeoutError:
+                # signal-cli waits forever for the account's config lock when a daemon holds it
+                proc.kill()
+                await proc.wait()
+                raise SignalError(
+                    f"signal-cli receive did not finish within {timeout + _RECEIVE_GRACE:g}s "
+                    "(another signal-cli instance probably holds the account lock)"
+                ) from None
         finally:
             RECEIVE_LOCK_FILE.unlink(missing_ok=True)
 
