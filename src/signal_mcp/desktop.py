@@ -589,18 +589,45 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None, since_
     if not config_path.exists():
         raise DesktopImportError(f"Signal Desktop config not found at {config_path}")
 
-    if DESKTOP_IMPORT_LOCK_FILE.exists():
+    if not _acquire_import_lock():
         raise DesktopImportError(
             "A Signal Desktop import is already in progress "
             f"(lock file: {DESKTOP_IMPORT_LOCK_FILE})"
         )
-    DESKTOP_IMPORT_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DESKTOP_IMPORT_LOCK_FILE.write_text(str(os.getpid()))
 
     try:
         return _run_desktop_import(db_path, config_path, progress_cb, since_ms)
     finally:
         DESKTOP_IMPORT_LOCK_FILE.unlink(missing_ok=True)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _acquire_import_lock() -> bool:
+    """Take the import lock; False if a live process holds it.
+
+    A kill (launchd restarting the watch service) skips the `finally` that removes the lock, so
+    a lock whose process is gone, or whose content is not a pid, is taken over instead of
+    blocking every later import.
+    """
+    DESKTOP_IMPORT_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if DESKTOP_IMPORT_LOCK_FILE.exists():
+        try:
+            holder = int(DESKTOP_IMPORT_LOCK_FILE.read_text().strip())
+        except (ValueError, OSError):
+            holder = 0
+        if holder > 0 and _pid_alive(holder):
+            return False
+    DESKTOP_IMPORT_LOCK_FILE.write_text(str(os.getpid()))
+    return True
 
 
 def _run_desktop_import(db_path: Path, config_path: Path, progress_cb, since_ms: int) -> dict:
