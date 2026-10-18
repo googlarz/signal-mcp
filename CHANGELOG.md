@@ -4,6 +4,8 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.43.2] - 2026-10-18
+
 ### Fixed
 
 - **A stale Signal Desktop import lock blocked every later import.** If the watch service was killed mid-import (launchd restart), `desktop-import.lock` stayed behind and every start reported "import already in progress", pushing the watch onto its `signal-cli receive` fallback for good. A lock whose process no longer exists (or that holds no pid) is now taken over.
