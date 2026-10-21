@@ -12,7 +12,7 @@ import respx
 
 import signal_mcp.client as client_mod
 import signal_mcp.store as _store_mod
-from signal_mcp.client import SignalClient, SignalError
+from signal_mcp.client import SignalCliNotFoundError, SignalClient, SignalError
 from signal_mcp.config import DAEMON_URL
 from signal_mcp.models import Contact, Group, Message, SendResult
 
@@ -62,6 +62,21 @@ async def test_ensure_daemon_returns_when_service_installed(client, monkeypatch)
     with patch.object(client, "_daemon_alive", new_callable=AsyncMock) as alive:
         await client.ensure_daemon()
     alive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_daemon_signal_cli_missing_names_path(client, monkeypatch):
+    """launchd's bare PATH has no signal-cli: say so, and show the PATH searched."""
+    monkeypatch.setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    monkeypatch.setattr(client_mod, "read_daemon_pid", lambda: None)
+    with patch.object(client, "_daemon_alive", AsyncMock(return_value=False)), \
+         patch("signal_mcp.client.subprocess.Popen", side_effect=FileNotFoundError(2, "No such file", "signal-cli")), \
+         patch("signal_mcp.client.save_daemon_pid") as save_pid:
+        with pytest.raises(SignalCliNotFoundError) as exc:
+            await client.ensure_daemon(force=True)
+    assert str(exc.value).startswith("signal-cli not found on PATH (/usr/bin:/bin:/usr/sbin:/sbin)")
+    assert "signal-mcp install-service" in str(exc.value)
+    save_pid.assert_not_called()
 
 
 # ── account property lazy init ────────────────────────────────────────────────
@@ -1043,6 +1058,21 @@ async def test_receive_direct_succeeds_on_zero_exit(client, monkeypatch):
          patch("signal_mcp.client.asyncio.sleep", fake_sleep):
         result = await client.receive_direct(timeout=1)
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_receive_direct_signal_cli_missing(client, monkeypatch):
+    monkeypatch.setattr(client, "stop_daemon", AsyncMock(return_value=True))
+
+    async def fake_sleep(*_a, **_kw):
+        return None
+
+    exec_mock = AsyncMock(side_effect=FileNotFoundError(2, "No such file", "signal-cli"))
+    with patch("signal_mcp.client.asyncio.create_subprocess_exec", exec_mock), \
+         patch("signal_mcp.client.asyncio.sleep", fake_sleep):
+        with pytest.raises(SignalCliNotFoundError, match="signal-cli not found on PATH"):
+            await client.receive_direct(timeout=1)
+    assert not client_mod.RECEIVE_LOCK_FILE.exists()
 
 
 # ── _ensure_contact_cache: only SignalError is swallowed ────────────────────

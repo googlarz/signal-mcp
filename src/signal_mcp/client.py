@@ -29,6 +29,7 @@ from .config import (
     is_service_installed,
     read_daemon_pid,
     save_daemon_pid,
+    signal_cli_not_found_message,
     validate_send_path,
 )
 from .formatting import parse_styled_text, parse_styled_text_mapped
@@ -41,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 class SignalError(Exception):
     pass
+
+
+class SignalCliNotFoundError(SignalError):
+    """The signal-cli executable isn't on PATH; retrying won't help."""
 
 
 _rpc_id = itertools.count(1)
@@ -370,6 +375,8 @@ class SignalClient:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+            except FileNotFoundError:
+                raise SignalCliNotFoundError(signal_cli_not_found_message()) from None
             except OSError as e:
                 raise SignalError(f"could not start signal-cli daemon: {e}") from e
             save_daemon_pid(proc.pid)
@@ -975,11 +982,14 @@ class SignalClient:
             await self.stop_daemon()
             await asyncio.sleep(0.5)
 
-            proc = await asyncio.create_subprocess_exec(
-                "signal-cli", "-u", self.account, "-o", "json", *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "signal-cli", "-u", self.account, "-o", "json", *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError:
+                raise SignalCliNotFoundError(signal_cli_not_found_message()) from None
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout + _RECEIVE_GRACE

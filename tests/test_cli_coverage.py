@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 import signal_mcp.store as _store_mod
 from signal_mcp.cli import cli
-from signal_mcp.client import SignalError
+from signal_mcp.client import SignalCliNotFoundError, SignalError
 from signal_mcp.models import Contact, Group, GroupMember, Message, SendResult
 
 
@@ -301,12 +301,17 @@ def test_status_detect_account_failure(runner):
 
 # ── daemon command ────────────────────────────────────────────────────────────
 
-def test_daemon_detect_account_success(runner):
-    """daemon command: detect_account succeeds, prints startup message, subprocess is mocked."""
+def test_daemon_detect_account_success(runner, tmp_path, monkeypatch):
+    """daemon command: detect_account succeeds, prints startup message, signal-cli is mocked.
+
+    Popen (not subprocess.run) is what daemon calls: unmocked, this started a real
+    signal-cli and its `finally` deleted the real ~/.local/share/signal-mcp/daemon.pid."""
+    monkeypatch.setattr("signal_mcp.config.DAEMON_PID_FILE", tmp_path / "daemon.pid")
     with patch("signal_mcp.cli.detect_account", return_value="+1test"), \
-         patch("signal_mcp.cli.subprocess.run", side_effect=KeyboardInterrupt()):
+         patch("signal_mcp.cli.subprocess.Popen", return_value=MagicMock(pid=4242)) as popen:
         result = runner.invoke(cli, ["daemon"])
     assert "Starting signal-cli daemon" in result.output
+    popen.assert_called_once()
 
 
 def test_daemon_detect_account_failure(runner):
@@ -315,6 +320,18 @@ def test_daemon_detect_account_failure(runner):
         result = runner.invoke(cli, ["daemon"])
     assert result.exit_code == 1
     assert "Error:" in result.output
+
+
+def test_daemon_signal_cli_missing(runner):
+    """daemon command: no signal-cli on PATH → exits 1 with a clear error, not a traceback."""
+    with patch("signal_mcp.cli.detect_account", return_value="+1test"), \
+         patch("signal_mcp.cli.subprocess.Popen", side_effect=FileNotFoundError(2, "No such file", "signal-cli")), \
+         patch("signal_mcp.cli.save_daemon_pid") as save_pid:
+        result = runner.invoke(cli, ["daemon"])
+    assert result.exit_code == 1
+    assert "Error: signal-cli not found on PATH" in result.output
+    assert not isinstance(result.exception, FileNotFoundError)
+    save_pid.assert_not_called()
 
 
 # ── stop command ─────────────────────────────────────────────────────────────
@@ -462,6 +479,7 @@ def test_install_service_darwin_success(runner, tmp_path, monkeypatch):
 
     with patch("platform.system", return_value="Darwin"), \
          patch("signal_mcp.cli._find_binary_args", return_value=["/opt/homebrew/bin/uv", "run", "--directory", "/tmp/signal mcp", "signal-mcp"]), \
+         patch("shutil.which", return_value="/opt/signal-cli/bin/signal-cli"), \
          patch("subprocess.run", return_value=mock_result):
         result = runner.invoke(cli, ["install-service"])
 
@@ -473,7 +491,60 @@ def test_install_service_darwin_success(runner, tmp_path, monkeypatch):
         "/opt/homebrew/bin/uv", "run", "--directory", "/tmp/signal mcp",
         "signal-mcp", "receive", "--watch",
     ]
-    assert plist["EnvironmentVariables"]["PATH"].startswith("/opt/homebrew/bin:")
+    assert plist["EnvironmentVariables"]["PATH"] == (
+        "/opt/signal-cli/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    )
+
+
+def test_install_service_darwin_path_finds_signal_cli(runner, tmp_path, monkeypatch):
+    """launchd runs agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin; the plist must
+    carry the directories signal-cli and signal-mcp are installed in."""
+    import signal_mcp.cli as cli_mod
+    plist_path = tmp_path / "com.signal-mcp.watch.plist"
+    monkeypatch.setattr(cli_mod, "PLIST_PATH", plist_path)
+    installed = {
+        "signal-cli": "/opt/homebrew/bin/signal-cli",
+        "signal-mcp": "/Users/me/.local/bin/signal-mcp",
+    }
+
+    with patch("platform.system", return_value="Darwin"), \
+         patch("shutil.which", side_effect=installed.get), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")):
+        result = runner.invoke(cli, ["install-service"])
+
+    assert result.exit_code == 0
+    assert "Warning" not in result.output
+    with plist_path.open("rb") as handle:
+        plist = plistlib.load(handle)
+    path = "/opt/homebrew/bin:/Users/me/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    assert plist["EnvironmentVariables"] == {"PATH": path}
+    assert f"PATH  : {path}" in result.output
+
+
+def test_install_service_warns_without_signal_cli(runner, tmp_path, monkeypatch):
+    import signal_mcp.cli as cli_mod
+    plist_path = tmp_path / "com.signal-mcp.watch.plist"
+    monkeypatch.setattr(cli_mod, "PLIST_PATH", plist_path)
+
+    with patch("platform.system", return_value="Darwin"), \
+         patch("shutil.which", side_effect={"signal-mcp": "/Users/me/.local/bin/signal-mcp"}.get), \
+         patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")):
+        result = runner.invoke(cli, ["install-service"])
+
+    assert result.exit_code == 0
+    assert "Warning: signal-cli not found" in result.output
+    with plist_path.open("rb") as handle:
+        plist = plistlib.load(handle)
+    assert plist["EnvironmentVariables"]["PATH"] == (
+        "/Users/me/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    )
+
+
+def test_service_path_dedupes_and_skips_relative_binary():
+    import signal_mcp.cli as cli_mod
+    assert cli_mod._service_path("/usr/bin/signal-cli", ["uv", "run"]) == (
+        "/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin"
+    )
 
 
 def test_install_service_darwin_launchctl_warn(runner, tmp_path, monkeypatch):
@@ -527,13 +598,21 @@ def test_install_service_linux_success(runner, tmp_path, monkeypatch):
     mock_result.returncode = 0
     mock_result.stderr = ""
 
+    installed = {
+        "signal-cli": "/home/me/.local/bin/signal-cli",
+        "signal-mcp": "/home/me/.local/share/uv/tools/bin/signal-mcp",
+    }
     with patch("platform.system", return_value="Linux"), \
-         patch("signal_mcp.cli._find_binary_args", return_value=["/usr/bin/signal-mcp"]), \
+         patch("shutil.which", side_effect=installed.get), \
          patch("subprocess.run", return_value=mock_result):
         result = runner.invoke(cli, ["install-service"])
 
     assert result.exit_code == 0
     assert "installed" in result.output.lower()
+    assert (
+        'Environment="PATH=/home/me/.local/bin:/home/me/.local/share/uv/tools/bin:'
+        '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"\n'
+    ) in service_path.read_text()
 
 
 def test_install_service_unsupported_platform(runner):
@@ -892,6 +971,25 @@ def test_receive_watch_survives_transient_error(runner):
     assert result.exit_code == 0
     assert "[watch] receive error: socket reset" in result.output
     assert "after recovery" in result.output
+
+
+def test_receive_watch_exits_when_signal_cli_missing(runner):
+    """A missing signal-cli won't fix itself: exit with one clear error, don't log it every poll."""
+    client = _mock_client()
+    client.receive_direct = AsyncMock(side_effect=SignalCliNotFoundError("signal-cli not found on PATH (/usr/bin:/bin)"))
+
+    async def _fast_sleep(_):
+        pass
+
+    with patch("signal_mcp.cli.SignalClient", return_value=client), \
+         patch("signal_mcp.desktop.SIGNAL_DB") as mock_db, \
+         patch("asyncio.sleep", side_effect=_fast_sleep):
+        mock_db.exists.return_value = False
+        result = runner.invoke(cli, ["receive", "--watch"])
+    assert result.exit_code == 1
+    assert "Error: signal-cli not found on PATH (/usr/bin:/bin)" in result.output
+    assert "[watch] receive error" not in result.output
+    client.receive_direct.assert_awaited_once()
 
 
 def test_receive_posts_to_webhook(runner):

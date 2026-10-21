@@ -105,6 +105,14 @@ def test_detect_account_subprocess_nonzero_exit(monkeypatch, tmp_path):
             detect_account()
 
 
+def test_detect_account_signal_cli_missing(monkeypatch, tmp_path):
+    """No accounts.json and no signal-cli on PATH: a clear RuntimeError, not FileNotFoundError."""
+    monkeypatch.setattr(config_mod, "_ACCOUNTS_JSON", tmp_path / "nonexistent.json")
+    with patch("signal_mcp.config.subprocess.run", side_effect=FileNotFoundError(2, "No such file", "signal-cli")):
+        with pytest.raises(RuntimeError, match="signal-cli not found on PATH"):
+            detect_account()
+
+
 def test_detect_account_subprocess_no_matching_line(monkeypatch, tmp_path):
     """Zero exit but no parseable account line raises RuntimeError."""
     monkeypatch.setattr(config_mod, "_ACCOUNTS_JSON", tmp_path / "nonexistent.json")
