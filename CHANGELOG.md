@@ -4,10 +4,13 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.43.3] - 2026-10-21
+
 ### Fixed
 
 - **The background service could not find a signal-cli installed outside a few fixed directories.** launchd starts agents with `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, and systemd doesn't read your shell's PATH either. The LaunchAgent had a fixed Homebrew PATH and the systemd unit had none. If the watcher had to start signal-cli itself, it crashed with `FileNotFoundError: 'signal-cli'`, and `KeepAlive` restarted it in a loop that filled `watch.err`. `install-service` now builds the service's PATH when you run it: signal-cli's directory (from your current PATH), signal-mcp's directory, then the standard system directories. The LaunchAgent gets it as `EnvironmentVariables` and the systemd unit as `Environment=PATH=`. If signal-cli isn't on your PATH at install time, `install-service` warns you. Rerun `signal-mcp install-service` to pick this up.
 - **A missing signal-cli now gives a clear error, not a traceback.** Starting the daemon (from any command, or `signal-mcp daemon`), `receive`, and the `listAccounts` fallback in account detection now say `signal-cli not found on PATH (...)`, show the PATH that was searched, and say how to fix it. `receive --watch` exits with that error instead of retrying, because retrying can't help.
+- **Development:** `test_daemon_detect_account_success` started a real `signal-cli` and its cleanup deleted the developer's real `~/.local/share/signal-mcp/daemon.pid` on every test run. It now mocks `Popen` and uses a temporary PID file.
 
 ## [1.43.2] - 2026-10-18
 

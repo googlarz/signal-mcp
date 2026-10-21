@@ -785,7 +785,7 @@ wheels = [
 
 [[package]]
 name = "signal-mcp"
-version = "1.43.2"
+version = "1.43.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
