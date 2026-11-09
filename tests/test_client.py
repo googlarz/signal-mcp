@@ -497,9 +497,10 @@ async def test_edit_message_dm_rpc_params(client):
     await client.edit_message(1700000000000, "new text", recipient="+19999999999")
     import json
     body = json.loads(route.calls[0].request.read())
-    assert body["method"] == "editMessage"
+    assert body["method"] == "send"
     params = body["params"]
-    assert params["targetTimestamp"] == 1700000000000
+    assert params["editTimestamp"] == 1700000000000
+    assert "targetTimestamp" not in params
     assert params["message"] == "new text"
     assert params["recipient"] == ["+19999999999"]
 
@@ -510,8 +511,11 @@ async def test_edit_message_group_rpc_params(client):
     route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     await client.edit_message(1700000000000, "fixed", group_id="grp1==")
     import json
-    params = json.loads(route.calls[0].request.read())["params"]
+    body = json.loads(route.calls[0].request.read())
+    assert body["method"] == "send"
+    params = body["params"]
     assert params["groupId"] == "grp1=="
+    assert params["editTimestamp"] == 1700000000000
 
 
 @respx.mock

@@ -1723,12 +1723,14 @@ class SignalClient:
         """Edit a previously sent message and update the local store."""
         if not recipient and not group_id:
             raise SignalError("Either recipient or group_id must be provided")
-        params: dict = {"targetTimestamp": target_timestamp, "message": message}
+        # signal-cli has no "editMessage" RPC method: an edit is a normal "send"
+        # with editTimestamp set to the timestamp of the original message.
+        params: dict = {"editTimestamp": target_timestamp, "message": message}
         if group_id:
             params["groupId"] = group_id
         else:
             params["recipient"] = [recipient]
-        await self._rpc("editMessage", params)
+        await self._rpc("send", params)
         await asyncio.to_thread(_store.update_message_body, target_timestamp, message, self.account)
 
     async def send_read_receipt(self, sender: str, timestamps: list[int]) -> None:
