@@ -4,6 +4,12 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.43.4] - 2026-11-09
+
+### Fixed
+
+- **`edit_message` never worked.** It called a JSON-RPC method `editMessage` that signal-cli does not have (the daemon answers "Method not implemented"). signal-cli edits a message through `send` with `editTimestamp` set to the original message's timestamp, and `edit_message` now does exactly that, for direct messages and groups. Thanks to @febin-micheal for the fix.
+
 ## [1.43.3] - 2026-10-21
 
 ### Fixed
