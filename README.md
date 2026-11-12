@@ -60,7 +60,7 @@ uv tool install signal-mcp
 claude mcp add signal -- signal-mcp serve
 ```
 
-Needs Python 3.12+, signal-cli 0.13+ and a Signal account on your phone. Restart Claude Code and ask *"check my Signal messages"*. Works with any MCP client (Claude Code and Claude Desktop are what it is developed and tested with) — config snippets are in [Setup](#setup).
+Needs Python 3.12+, signal-cli 0.13+ (0.14.9 or newer recommended) and a Signal account on your phone. Restart Claude Code and ask *"check my Signal messages"*. Works with any MCP client (Claude Code and Claude Desktop are what it is developed and tested with) — config snippets are in [Setup](#setup).
 
 ## What you can ask
 
@@ -101,6 +101,8 @@ brew install signal-cli
 
 **Linux**
 Download the latest release from [signal-cli releases](https://github.com/AsamK/signal-cli/releases), extract it, and put the `signal-cli` binary on your `$PATH`.
+
+**Version.** signal-mcp refuses to run on signal-cli older than **0.13.0**. Use **0.14.9 or newer**: 0.14.8 has a bug that breaks `list_devices` and the `doctor` check, and the attachment size/preview options (`attachment_dimensions`, `attachment_blurhash`) need 0.14.9. Check yours with `signal-cli --version`.
 
 ### Step 2 — Link your Signal account
 
