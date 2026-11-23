@@ -4,6 +4,8 @@ All notable changes to signal-mcp are documented here.
 
 ## [Unreleased]
 
+## [1.43.5] - 2026-11-23
+
 ### Fixed
 
 - **Three requests used parameter names signal-cli does not have**, found by the new contract test (below). `update_profile` sent the avatar as `avatarPath` (signal-cli reads `avatar`), so setting a profile picture was silently ignored; `update_device` sent `name` (signal-cli reads `deviceName`), so renaming a device did nothing; the read receipt sent `receiptType` (signal-cli reads `type`) and only worked because "read" is the default. Their tests had asserted the wrong names, which is how they passed. These three are checked against signal-cli's own `--help`, not yet against a live account.
