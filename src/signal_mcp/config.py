@@ -176,6 +176,22 @@ def read_daemon_pid() -> int | None:
         return None
 
 
+def lock_is_live(path: Path) -> bool:
+    """True if `path` exists and holds the pid of a running process.
+
+    A killed process leaves its lock file behind; treating that as held would stop the daemon
+    from ever starting again.
+    """
+    try:
+        pid = int(path.read_text().strip())
+        os.kill(pid, 0)
+    except (FileNotFoundError, ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return pid > 0
+
+
 def clear_daemon_pid() -> None:
     DAEMON_PID_FILE.unlink(missing_ok=True)
 

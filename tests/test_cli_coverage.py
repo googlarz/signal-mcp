@@ -85,6 +85,37 @@ def test_receive_watch_mode(runner):
     assert "watched message" in result.output
 
 
+def test_watch_busy_desktop_import_skips_cycle_instead_of_falling_back(runner):
+    """A live import holding the lock must not push the watch onto `signal-cli receive` for good:
+    that fallback kills the daemon every cycle."""
+    from signal_mcp.desktop import DesktopImportBusy, DesktopImportError
+
+    client = _mock_client()
+    client.receive_direct = AsyncMock(side_effect=AssertionError("fell back to signal-cli receive"))
+    calls = [0]
+
+    def _sync():
+        calls[0] += 1
+        if calls[0] == 1:
+            raise DesktopImportBusy("import already in progress")
+        if calls[0] == 2:
+            return {"imported": 3}
+        raise KeyboardInterrupt()
+
+    async def _fast_sleep(_):
+        pass
+
+    with patch("signal_mcp.cli.SignalClient", return_value=client), \
+         patch("signal_mcp.desktop.SIGNAL_DB") as mock_db, \
+         patch("signal_mcp.desktop.sync_from_desktop", side_effect=_sync), \
+         patch("asyncio.sleep", side_effect=_fast_sleep):
+        mock_db.exists.return_value = True
+        result = runner.invoke(cli, ["receive", "--watch"])
+    assert calls[0] == 3  # kept using Desktop after the busy cycle
+    assert "falling back" not in result.output
+    assert issubclass(DesktopImportBusy, DesktopImportError)
+
+
 def test_receive_keyboard_interrupt(runner):
     """KeyboardInterrupt during receive prints 'Stopped.' and exits 0."""
     client = _mock_client()

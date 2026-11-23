@@ -449,7 +449,7 @@ async def test_update_profile_avatar_path(client, tmp_path):
 
     respx.post(DAEMON_URL).mock(side_effect=capture)
     await client.update_profile(avatar_path=str(avatar))
-    assert "avatarPath" in captured["body"]["params"]
+    assert "avatar" in captured["body"]["params"]
 
 
 @respx.mock
@@ -1041,6 +1041,40 @@ async def test_receive_direct_kills_a_hung_receive_and_releases_the_lock(client,
 
     proc_mock.kill.assert_called_once()
     assert not lock.exists()
+
+
+@pytest.mark.asyncio
+async def test_stale_receive_lock_does_not_block_daemon_start(client, monkeypatch, tmp_path):
+    """A receive.lock left by a killed process must not stop ensure_daemon from starting signal-cli."""
+    import subprocess
+    import sys
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    lock = tmp_path / "receive.lock"
+    lock.write_text(str(dead.pid))
+    monkeypatch.setattr(client_mod, "RECEIVE_LOCK_FILE", lock)
+    monkeypatch.setattr(client_mod, "is_service_installed", lambda: False)
+    monkeypatch.setattr(client_mod, "_daemon_last_ok_at", 0.0)
+    monkeypatch.setattr(client, "_daemon_alive", AsyncMock(return_value=False))
+    monkeypatch.setattr(client_mod, "read_daemon_pid", lambda: None)
+    monkeypatch.setattr(client_mod, "save_daemon_pid", lambda pid: None)
+    popen = MagicMock(return_value=MagicMock(pid=1))
+    monkeypatch.setattr(client_mod.subprocess, "Popen", popen)
+    monkeypatch.setattr(client_mod.asyncio, "sleep", AsyncMock())
+    with pytest.raises(SignalError, match="failed to start"):
+        await client.ensure_daemon(force=True)  # daemon never answers in this test
+    popen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_daemon_only_signals_the_listener(client, monkeypatch):
+    """lsof without -sTCP:LISTEN also lists clients connected to the port, e.g. the MCP server."""
+    monkeypatch.setattr(client_mod, "read_daemon_pid", lambda: None)
+    run = MagicMock(return_value=MagicMock(stdout=""))
+    monkeypatch.setattr(client_mod.subprocess, "run", run)
+    await client.stop_daemon()
+    assert "-sTCP:LISTEN" in run.call_args.args[0]
 
 
 @pytest.mark.asyncio

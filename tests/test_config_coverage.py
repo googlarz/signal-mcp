@@ -289,3 +289,22 @@ def test_send_roots_env_override(monkeypatch, tmp_path):
     finally:
         monkeypatch.delenv("SIGNAL_MCP_SEND_ROOTS", raising=False)
         importlib.reload(config_mod)
+
+
+def test_lock_is_live(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    from signal_mcp.config import lock_is_live
+
+    lock = tmp_path / "x.lock"
+    assert lock_is_live(lock) is False  # missing
+    lock.write_text(str(os.getpid()))
+    assert lock_is_live(lock) is True
+    lock.write_text("garbage")
+    assert lock_is_live(lock) is False
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    lock.write_text(str(proc.pid))
+    assert lock_is_live(lock) is False  # killed process left its lock behind

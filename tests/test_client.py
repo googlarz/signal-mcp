@@ -387,7 +387,7 @@ async def test_send_group_attachment_rpc_params(client):
 @respx.mock
 @pytest.mark.asyncio
 async def test_send_read_receipt_rpc_params(client):
-    """send_read_receipt must use sendReceipt with receiptType=read."""
+    """send_read_receipt must use sendReceipt with type=read."""
     route = respx.post(DAEMON_URL).mock(return_value=httpx.Response(200, json=rpc_ok({})))
     await client.send_read_receipt("+19999999999", [111, 222])
     import json
@@ -396,7 +396,7 @@ async def test_send_read_receipt_rpc_params(client):
     params = body["params"]
     assert params["recipient"] == "+19999999999"
     assert params["targetTimestamp"] == [111, 222]
-    assert params["receiptType"] == "read"
+    assert params["type"] == "read"
 
 
 @respx.mock
@@ -1244,7 +1244,7 @@ async def test_update_device(client):
     await client.update_device(2, "My Mac")
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "updateDevice"
-    assert req_body["params"]["name"] == "My Mac"
+    assert req_body["params"]["deviceName"] == "My Mac"
 
 
 # ── reaction envelope skip ────────────────────────────────────────────────────
@@ -1465,7 +1465,7 @@ async def test_send_read_receipt_rpc_method(client):
     await client.send_read_receipt("+19999999999", [111, 222])
     req_body = json.loads(respx.calls[-1].request.content)
     assert req_body["method"] == "sendReceipt"
-    assert req_body["params"]["receiptType"] == "read"
+    assert req_body["params"]["type"] == "read"
     assert req_body["params"]["targetTimestamp"] == [111, 222]
 
 

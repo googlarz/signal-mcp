@@ -27,6 +27,7 @@ from .config import (
     detect_account,
     ensure_attachment_dir,
     is_service_installed,
+    lock_is_live,
     read_daemon_pid,
     save_daemon_pid,
     signal_cli_not_found_message,
@@ -342,7 +343,7 @@ class SignalClient:
         # A background watcher owns message ingestion and may deliberately use
         # another source (for example Signal Desktop) or an externally managed
         # signal-cli daemon.  Never start a competing daemon in that case.
-        if is_service_installed() or RECEIVE_LOCK_FILE.exists():
+        if is_service_installed() or lock_is_live(RECEIVE_LOCK_FILE):
             return
         # TTL fast path: skip HTTP ping if daemon was healthy recently
         if not force and time.monotonic() - _daemon_last_ok_at < _DAEMON_OK_TTL:
@@ -403,7 +404,7 @@ class SignalClient:
                 clear_daemon_pid()
         try:
             result = subprocess.run(
-                ["lsof", "-ti", f"tcp:{DAEMON_PORT}"],
+                ["lsof", "-ti", f"tcp:{DAEMON_PORT}", "-sTCP:LISTEN"],
                 capture_output=True, text=True,
             )
             for pid_str in result.stdout.strip().splitlines():
@@ -1339,7 +1340,7 @@ class SignalClient:
             params["mobileCoinAddress"] = mobilecoin_address
         if avatar_path is not None:
             try:
-                params["avatarPath"] = str(validate_send_path(avatar_path))
+                params["avatar"] = str(validate_send_path(avatar_path))
             except ValueError as e:
                 raise SignalError(str(e)) from e
         if remove_avatar:
@@ -1737,7 +1738,7 @@ class SignalClient:
         await self._rpc("sendReceipt", {
             "recipient": sender,
             "targetTimestamp": timestamps,
-            "receiptType": "read",
+            "type": "read",
         })
         # Mark as read in local store — received message IDs are str(timestamp_ms)
         await asyncio.to_thread(_store.mark_as_read, [str(ts) for ts in timestamps])
@@ -1847,7 +1848,7 @@ class SignalClient:
 
     async def update_device(self, device_id: int, name: str) -> None:
         """Rename a linked device."""
-        await self._rpc("updateDevice", {"deviceId": device_id, "name": name})
+        await self._rpc("updateDevice", {"deviceId": device_id, "deviceName": name})
 
     # ── Local store extras ────────────────────────────────────────────────────
 

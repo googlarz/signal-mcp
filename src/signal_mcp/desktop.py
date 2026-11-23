@@ -62,6 +62,10 @@ class DesktopImportError(Exception):
     pass
 
 
+class DesktopImportBusy(DesktopImportError):
+    """Another live process is importing; retry later, don't give up on Desktop."""
+
+
 def _get_keychain_password() -> bytes:
     """Retrieve the Signal Safe Storage password from the OS keychain."""
     system = platform.system()
@@ -590,7 +594,7 @@ def import_from_desktop(progress_cb=None, signal_dir: Path | None = None, since_
         raise DesktopImportError(f"Signal Desktop config not found at {config_path}")
 
     if not _acquire_import_lock():
-        raise DesktopImportError(
+        raise DesktopImportBusy(
             "A Signal Desktop import is already in progress "
             f"(lock file: {DESKTOP_IMPORT_LOCK_FILE})"
         )

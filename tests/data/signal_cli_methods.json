@@ -1,0 +1,384 @@
+{
+ "methods": {
+  "acceptCall": [
+   "callId"
+  ],
+  "addDevice": [
+   "uri"
+  ],
+  "addStickerPack": [
+   "uri"
+  ],
+  "block": [
+   "group",
+   "groupId",
+   "recipient"
+  ],
+  "daemon": [
+   "busName",
+   "dbus",
+   "dbusSystem",
+   "http",
+   "ignoreAttachments",
+   "ignoreAvatars",
+   "ignoreStickers",
+   "ignoreStories",
+   "noReceiveStdout",
+   "receiveMode",
+   "sendReadReceipts",
+   "socket",
+   "sseKeepaliveInterval",
+   "system",
+   "tcp"
+  ],
+  "deleteLocalAccountData": [
+   "ignoreRegistered"
+  ],
+  "finishChangeNumber": [
+   "number",
+   "pin",
+   "verificationCode"
+  ],
+  "getAttachment": [
+   "groupId",
+   "id",
+   "recipient"
+  ],
+  "getAvatar": [
+   "contact",
+   "groupId",
+   "profile"
+  ],
+  "getSticker": [
+   "packId",
+   "stickerId"
+  ],
+  "getUserStatus": [
+   "recipient",
+   "username"
+  ],
+  "hangupCall": [
+   "callId"
+  ],
+  "joinGroup": [
+   "uri"
+  ],
+  "jsonRpc": [
+   "ignoreAttachments",
+   "ignoreAvatars",
+   "ignoreStickers",
+   "ignoreStories",
+   "receiveMode",
+   "sendReadReceipts"
+  ],
+  "link": [
+   "name"
+  ],
+  "listAccounts": [],
+  "listCalls": [],
+  "listContacts": [
+   "allRecipients",
+   "blocked",
+   "detailed",
+   "internal",
+   "name",
+   "recipient"
+  ],
+  "listDevices": [],
+  "listGroups": [
+   "detailed",
+   "groupId"
+  ],
+  "listIdentities": [
+   "number"
+  ],
+  "listStickerPacks": [],
+  "quitGroup": [
+   "admin",
+   "delete",
+   "group",
+   "groupId"
+  ],
+  "receive": [
+   "ignoreAttachments",
+   "ignoreAvatars",
+   "ignoreStickers",
+   "ignoreStories",
+   "maxMessages",
+   "sendReadReceipts",
+   "timeout"
+  ],
+  "register": [
+   "captcha",
+   "recoveryKey",
+   "reregister",
+   "totp",
+   "voice"
+  ],
+  "rejectCall": [
+   "callId"
+  ],
+  "remoteDelete": [
+   "group",
+   "groupId",
+   "noteToSelf",
+   "recipient",
+   "targetTimestamp",
+   "username"
+  ],
+  "removeContact": [
+   "forget",
+   "hide",
+   "recipient"
+  ],
+  "removeDevice": [
+   "device",
+   "deviceId"
+  ],
+  "removePin": [],
+  "send": [
+   "attachment",
+   "attachmentBlurhash",
+   "attachmentDimensions",
+   "editTimestamp",
+   "endSession",
+   "endsession",
+   "group",
+   "groupId",
+   "mention",
+   "message",
+   "messageFromStdin",
+   "noUrgent",
+   "noteToSelf",
+   "notifySelf",
+   "previewDescription",
+   "previewImage",
+   "previewTitle",
+   "previewUrl",
+   "quoteAttachment",
+   "quoteAuthor",
+   "quoteMention",
+   "quoteMessage",
+   "quoteTextStyle",
+   "quoteTimestamp",
+   "recipient",
+   "sticker",
+   "storyAuthor",
+   "storyTimestamp",
+   "textStyle",
+   "timestamp",
+   "username",
+   "viewOnce",
+   "voiceNote"
+  ],
+  "sendAdminDelete": [
+   "group",
+   "groupId",
+   "notifySelf",
+   "story",
+   "targetAuthor",
+   "targetTimestamp"
+  ],
+  "sendContacts": [],
+  "sendMessageRequestResponse": [
+   "group",
+   "groupId",
+   "recipient",
+   "type",
+   "username"
+  ],
+  "sendPaymentNotification": [
+   "note",
+   "receipt",
+   "recipient"
+  ],
+  "sendPinMessage": [
+   "group",
+   "groupId",
+   "noteToSelf",
+   "notifySelf",
+   "pinDuration",
+   "recipient",
+   "story",
+   "targetAuthor",
+   "targetTimestamp",
+   "username"
+  ],
+  "sendPollCreate": [
+   "group",
+   "groupId",
+   "noMulti",
+   "noteToSelf",
+   "notifySelf",
+   "option",
+   "question",
+   "recipient",
+   "username"
+  ],
+  "sendPollTerminate": [
+   "group",
+   "groupId",
+   "noteToSelf",
+   "notifySelf",
+   "pollTimestamp",
+   "recipient",
+   "username"
+  ],
+  "sendPollVote": [
+   "group",
+   "groupId",
+   "noteToSelf",
+   "notifySelf",
+   "option",
+   "pollAuthor",
+   "pollTimestamp",
+   "recipient",
+   "username",
+   "voteCount"
+  ],
+  "sendReaction": [
+   "emoji",
+   "group",
+   "groupId",
+   "noteToSelf",
+   "notifySelf",
+   "recipient",
+   "remove",
+   "story",
+   "targetAuthor",
+   "targetTimestamp",
+   "username"
+  ],
+  "sendReceipt": [
+   "recipient",
+   "targetTimestamp",
+   "type"
+  ],
+  "sendStory": [
+   "attachment",
+   "groupId",
+   "noReplies"
+  ],
+  "sendSyncRequest": [],
+  "sendTyping": [
+   "group",
+   "groupId",
+   "recipient",
+   "stop"
+  ],
+  "sendUnpinMessage": [
+   "group",
+   "groupId",
+   "noteToSelf",
+   "notifySelf",
+   "recipient",
+   "story",
+   "targetAuthor",
+   "targetTimestamp",
+   "username"
+  ],
+  "setPin": [
+   "pin"
+  ],
+  "startCall": [
+   "recipient"
+  ],
+  "startChangeNumber": [
+   "captcha",
+   "number",
+   "voice"
+  ],
+  "submitRateLimitChallenge": [
+   "captcha",
+   "challenge"
+  ],
+  "terminateGroup": [
+   "group",
+   "groupId"
+  ],
+  "trust": [
+   "recipient",
+   "trustAllKnownKeys",
+   "verifiedFingerprint",
+   "verifiedSafetyNumber"
+  ],
+  "unblock": [
+   "group",
+   "groupId",
+   "recipient"
+  ],
+  "unregister": [
+   "deleteAccount"
+  ],
+  "updateAccount": [
+   "deleteUsername",
+   "deviceName",
+   "discoverableByNumber",
+   "numberSharing",
+   "unrestrictedUnidentifiedSender",
+   "username"
+  ],
+  "updateConfiguration": [
+   "linkPreviews",
+   "readReceipts",
+   "typingIndicators",
+   "unidentifiedDeliveryIndicators"
+  ],
+  "updateContact": [
+   "expiration",
+   "familyName",
+   "givenName",
+   "name",
+   "nickFamilyName",
+   "nickGivenName",
+   "note",
+   "recipient"
+  ],
+  "updateDevice": [
+   "device",
+   "deviceId",
+   "deviceName"
+  ],
+  "updateGroup": [
+   "admin",
+   "avatar",
+   "ban",
+   "description",
+   "expiration",
+   "group",
+   "groupId",
+   "link",
+   "member",
+   "memberLabel",
+   "memberLabelEmoji",
+   "name",
+   "removeAdmin",
+   "removeMember",
+   "resetLink",
+   "setPermissionAddMember",
+   "setPermissionEditDetails",
+   "setPermissionSendMessages",
+   "unban"
+  ],
+  "updateProfile": [
+   "about",
+   "aboutEmoji",
+   "avatar",
+   "familyName",
+   "givenName",
+   "mobileCoinAddress",
+   "mobilecoinAddress",
+   "name",
+   "removeAvatar"
+  ],
+  "uploadStickerPack": [
+   "path"
+  ],
+  "verify": [
+   "pin",
+   "verificationCode"
+  ],
+  "version": []
+ },
+ "signal_cli_version": "signal-cli 0.14.10"
+}

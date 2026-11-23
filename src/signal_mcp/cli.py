@@ -152,7 +152,7 @@ def receive(watch: bool, timeout: int, interval: int, as_json: bool, webhook_url
                 if effective_webhook and messages:
                     await post_webhook_batch(effective_webhook, messages)
             else:
-                from .desktop import sync_from_desktop, SIGNAL_DB, DesktopImportError
+                from .desktop import sync_from_desktop, SIGNAL_DB, DesktopImportBusy, DesktopImportError
                 use_desktop = SIGNAL_DB.exists()
                 if not as_json:
                     if use_desktop:
@@ -175,6 +175,8 @@ def receive(watch: bool, timeout: int, interval: int, as_json: bool, webhook_url
                                         _print_message(msg)
                                 if effective_webhook:
                                     await post_webhook_batch(effective_webhook, messages)
+                    except DesktopImportBusy:
+                        pass  # a live import (e.g. sync_desktop) holds the lock; try again next cycle
                     except DesktopImportError as e:
                         if not as_json:
                             click.echo(f"[watch] desktop sync error: {e}", err=True)
