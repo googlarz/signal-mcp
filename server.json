@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.googlarz/signal-mcp",
+  "title": "Signal MCP",
+  "description": "Signal for AI assistants: search history, send, groups, polls. 100% local, on top of signal-cli.",
+  "repository": {
+    "url": "https://github.com/googlarz/signal-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/googlarz/signal-mcp",
+  "version": "1.43.4",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "signal-mcp",
+      "version": "1.43.4",
+      "runtimeHint": "uvx",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SIGNAL_MCP_READONLY",
+          "description": "Set to 1 to allow only read-only tools (no sending, editing or deleting).",
+          "isRequired": false
+        },
+        {
+          "name": "SIGNAL_MCP_SEND_ROOTS",
+          "description": "Colon-separated folders that files may be sent from. Default: the signal-mcp attachments folder, ~/Downloads, ~/Desktop, ~/Documents.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

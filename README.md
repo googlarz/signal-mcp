@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.googlarz/signal-mcp -->
 <div align="center">
 
 # signal-mcp
