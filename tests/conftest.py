@@ -25,8 +25,8 @@ def isolate_live_service_state(monkeypatch, tmp_path_factory):
     """The suite must never touch the developer's running signal-mcp.
 
     An unmocked daemon test once started a real signal-cli and its cleanup deleted the live
-    ~/.local/share/signal-mcp/daemon.pid. Point every state file at a temp dir and refuse to
-    start a real signal-cli; tests that need either patch it themselves, as before."""
+    ~/.local/share/signal-mcp/daemon.pid. Point every state file at a temp dir and make signal-cli
+    look absent, as it is on CI; tests that need either patch it themselves, as before."""
     import asyncio
     import subprocess
 
@@ -39,6 +39,9 @@ def isolate_live_service_state(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(_config, "WEBHOOK_CONFIG_FILE", state / "webhook.json")
     monkeypatch.setattr(_client, "RECEIVE_LOCK_FILE", state / "receive.lock")
     monkeypatch.setattr(_desktop, "DESKTOP_IMPORT_LOCK_FILE", state / "desktop-import.lock")
+    # a developer machine runs the background service; CI does not. Test as CI does.
+    monkeypatch.setattr(_config, "is_service_installed", lambda: False)
+    monkeypatch.setattr(_client, "is_service_installed", lambda: False)
 
     real_popen, real_exec = subprocess.Popen, asyncio.create_subprocess_exec
 
@@ -47,7 +50,8 @@ def isolate_live_service_state(monkeypatch, tmp_path_factory):
             first = args[0] if args else None
             argv = first if isinstance(first, (list, tuple)) else args
             if argv and str(argv[0]).endswith("signal-cli"):
-                raise AssertionError("a test tried to run the real signal-cli; mock it")
+                # same outcome as a machine without signal-cli (CI); never start the real one
+                raise FileNotFoundError(2, "signal-cli is not available in tests", "signal-cli")
             return real(*args, **kwargs)
         return guarded
 

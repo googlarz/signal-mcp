@@ -9,7 +9,7 @@ import signal_mcp.config as config
 
 
 def test_real_signal_cli_cannot_be_started():
-    with pytest.raises(AssertionError, match="real signal-cli"):
+    with pytest.raises(FileNotFoundError):
         subprocess.Popen(["signal-cli", "-u", "+1", "daemon"])
 
 
